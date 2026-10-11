@@ -276,7 +276,7 @@ function bundlePackageJson(air: AirDocument): unknown {
       "@anvil/runtime": "^0.1.0",
       "@anvil/mcp-runtime": "^0.1.0",
       "@anvil/cli": "^0.1.0",
-      "@modelcontextprotocol/sdk": "^1.22.0",
+      "@modelcontextprotocol/sdk": "^1.32.1",
     },
   };
 }

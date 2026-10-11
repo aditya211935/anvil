@@ -1,13 +1,24 @@
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, request, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { airToJson, Capability, loadAirDocument, Operation } from "@anvil/air";
 import { bundleHash, readBundleDir } from "@anvil/generators";
 import type { FleetServer } from "@anvil/mcp-runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildFleetForWorkspace } from "./serve.js";
+import {
+  buildFleetForWorkspace,
+  readyzBindFromEnv,
+  serveReadyz,
+  stdioSessionEnded,
+} from "./serve.js";
 
 /**
  * `--fleet` builds real bundle fixtures on disk (not through the full
@@ -491,5 +502,200 @@ describe("buildFleetForWorkspace", () => {
       // read this report at all and always laddered here.
       expect(tools.tools.length).toBe(7);
     });
+  });
+});
+
+describe("the /readyz listener", () => {
+  /** Resolves once `http` listens; a bind failure rejects at once instead of timing the test out. */
+  const listening = (http: Server) =>
+    new Promise<void>((resolve, reject) => {
+      const failed = (error: Error) => reject(error);
+      http.once("error", failed);
+      http.once("listening", () => {
+        http.off("error", failed);
+        resolve();
+      });
+    });
+
+  it("binds 127.0.0.1 on 8787 unless told otherwise", () => {
+    expect(readyzBindFromEnv({})).toEqual({ host: "127.0.0.1", port: 8787 });
+  });
+
+  it("takes ANVIL_FLEET_READYZ_HOST and _PORT from the environment, and ignores a value it cannot use", () => {
+    expect(
+      readyzBindFromEnv({ ANVIL_FLEET_READYZ_HOST: "0.0.0.0", ANVIL_FLEET_READYZ_PORT: "9100" }),
+    ).toEqual({ host: "0.0.0.0", port: 9100 });
+    expect(readyzBindFromEnv({ ANVIL_FLEET_READYZ_HOST: "::" }).host).toBe("::");
+    for (const host of ["", "  ", "not an address", "example.com"]) {
+      expect(readyzBindFromEnv({ ANVIL_FLEET_READYZ_HOST: host }).host).toBe("127.0.0.1");
+    }
+  });
+
+  const fleet = { readyz: () => ({ ready: true, bundles: [] }) };
+  const portOf = (http: Server) => (http.address() as AddressInfo).port;
+  const closed = (http: Server) => new Promise<void>((resolve) => http.close(() => resolve()));
+  /** GET with the `Host` header chosen by the test, always dialling 127.0.0.1. */
+  const getWithHost = (port: number, host: string, path = "/readyz") =>
+    new Promise<{ status: number; nosniff: boolean; body: string }>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path, headers: { host } }, (res) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => {
+          body += chunk.toString("utf8");
+        });
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            nosniff: res.headers["x-content-type-options"] === "nosniff",
+            body,
+          }),
+        );
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+  it("listens on the loopback only when started with the default bind", async () => {
+    const http = serveReadyz(fleet, { ...readyzBindFromEnv({}), port: 0 }, () => {});
+    await listening(http);
+    try {
+      const address = http.address();
+      if (typeof address !== "object" || !address) throw new Error("listener has no address");
+      expect(address.address).toBe("127.0.0.1");
+      const res = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ready: true, bundles: [] });
+    } finally {
+      await closed(http);
+    }
+  });
+
+  it("on a loopback bind answers only a loopback Host on its own port, so a DNS-rebinding page gets nothing", async () => {
+    const http = serveReadyz(fleet, { host: "127.0.0.1", port: 0 }, () => {});
+    await listening(http);
+    try {
+      const port = portOf(http);
+      for (const host of [
+        "attacker.example",
+        `attacker.example:${port}`,
+        `127.0.0.1.attacker.example:${port}`,
+        `127.0.0.1:${port + 1}`,
+        "127.0.0.1",
+        `0.0.0.0:${port}`,
+      ]) {
+        const reply = await getWithHost(port, host);
+        expect(reply.status, host).toBe(403);
+        expect(reply.nosniff, host).toBe(true);
+        expect(JSON.parse(reply.body), host).toMatchObject({ error: { code: "host_not_allowed" } });
+        expect(reply.body, host).not.toContain("bundles");
+      }
+      for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]) {
+        const reply = await getWithHost(port, host);
+        expect(reply.status, host).toBe(200);
+        expect(JSON.parse(reply.body), host).toEqual({ ready: true, bundles: [] });
+      }
+    } finally {
+      await closed(http);
+    }
+  });
+
+  it("keeps the Host check on for an unusual spelling of a loopback bind", async () => {
+    const http = serveReadyz(fleet, { host: "::ffff:127.0.0.1", port: 0 }, () => {});
+    await listening(http);
+    try {
+      const port = portOf(http);
+      expect((await getWithHost(port, `attacker.example:${port}`)).status).toBe(403);
+      expect((await getWithHost(port, `127.0.0.1:${port}`)).status).toBe(200);
+    } finally {
+      await closed(http);
+    }
+  });
+
+  it("on a non-loopback bind (a container probe) answers whatever Host the probe sends", async () => {
+    const http = serveReadyz(fleet, { host: "0.0.0.0", port: 0 }, () => {});
+    await listening(http);
+    try {
+      const port = portOf(http);
+      for (const host of ["fleet-pod.internal", `10.1.2.3:${port}`, `127.0.0.1:${port}`]) {
+        expect((await getWithHost(port, host)).status, host).toBe(200);
+      }
+    } finally {
+      await closed(http);
+    }
+  });
+
+  it("reports a bind it cannot take through log instead of throwing", async () => {
+    const taken = createServer();
+    taken.listen(0, "127.0.0.1");
+    await listening(taken);
+    const port = portOf(taken);
+    const lines: string[] = [];
+    try {
+      const http = serveReadyz(fleet, { host: "127.0.0.1", port }, (line) => lines.push(line));
+      await once(http, "error");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(
+        new RegExp(`^anvil: /readyz not served on 127\\.0\\.0\\.1:${port}: .*EADDRINUSE`),
+      );
+    } finally {
+      await closed(taken);
+    }
+  });
+});
+
+describe("stdioSessionEnded", () => {
+  const settledWithin = async (promise: Promise<void>, ms: number) =>
+    Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
+    ]);
+
+  it("stays open while stdin is open, then resolves when stdin ends", async () => {
+    const root = workspaceRoot();
+    writeBundle(join(root, "billing"), "billing", "list_invoices");
+    const built = await buildFleetForWorkspace(root, {});
+    if (!built.ok) throw new Error(built.message);
+    const stdin = new PassThrough();
+    const transport = new StdioServerTransport(stdin, new PassThrough());
+    const ended = stdioSessionEnded(transport, stdin);
+    await built.fleet.server.connect(transport);
+    try {
+      expect(await settledWithin(ended, 50)).toBe(false);
+      stdin.end();
+      expect(await settledWithin(ended, 1_000)).toBe(true);
+    } finally {
+      await built.fleet.server.close();
+      await built.fleet.close();
+    }
+  });
+
+  it("on end of input waits for a request already read to be answered", async () => {
+    const stdin = new PassThrough();
+    const transport: Pick<Transport, "onclose" | "onmessage" | "send"> = { send: async () => {} };
+    const ended = stdioSessionEnded(transport, stdin);
+    transport.onmessage?.({ jsonrpc: "2.0", id: 7, method: "tools/call", params: {} });
+    stdin.resume();
+    stdin.end();
+    expect(await settledWithin(ended, 50)).toBe(false);
+    await transport.send({ jsonrpc: "2.0", id: 7, result: { content: [] } });
+    expect(await settledWithin(ended, 1_000)).toBe(true);
+  });
+
+  it("resolves when the transport closes, through the onclose connect() chains", async () => {
+    const root = workspaceRoot();
+    writeBundle(join(root, "billing"), "billing", "list_invoices");
+    const built = await buildFleetForWorkspace(root, {});
+    if (!built.ok) throw new Error(built.message);
+    const stdin = new PassThrough();
+    const transport = new StdioServerTransport(stdin, new PassThrough());
+    const ended = stdioSessionEnded(transport, stdin);
+    await built.fleet.server.connect(transport);
+    try {
+      expect(await settledWithin(ended, 50)).toBe(false);
+      await built.fleet.server.close();
+      expect(await settledWithin(ended, 1_000)).toBe(true);
+      expect(stdin.listenerCount("end")).toBe(0);
+    } finally {
+      await built.fleet.close();
+    }
   });
 });

@@ -20,6 +20,7 @@ import {
 } from "./auth.js";
 import { AnvilError } from "./errors.js";
 import { DEFAULT_ACCOUNT } from "./grants.js";
+import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 
 /**
  * The gateway's credential vault (docs/branchyard.md, ADR-0029): upstream
@@ -443,6 +444,11 @@ export class VaultCredentialResolver implements CredentialResolver {
         this.vault.put({ ...current, status: "needs_reconnect", updatedAt: this.stamp() });
         throw needsReconnect(connector, account);
       }
+      // The grant below carries the refresh token and client secret. An endpoint
+      // that may not have them is the gateway's configuration, not a refusal of
+      // the person's authorization: fail without marking the connection, so
+      // fixing the endpoint brings it back without a reconnect.
+      if (!isSendableOAuthEndpoint(client.tokenEndpoint)) throw refreshFailed(connector, account);
       const request = tokenRequest(client, {
         grant_type: "refresh_token",
         refresh_token: current.refreshToken,
@@ -453,6 +459,8 @@ export class VaultCredentialResolver implements CredentialResolver {
           method: "POST",
           headers: request.headers,
           body: request.body,
+          // A 307/308 would re-POST the same credentials to wherever it points.
+          redirect: "error",
         });
       } catch {
         throw refreshFailed(connector, account);

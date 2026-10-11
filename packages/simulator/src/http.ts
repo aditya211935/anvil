@@ -549,9 +549,17 @@ export async function serveSimulatorHttp(
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
+      // The detail goes to this process's stderr (as a failed trace write does), never
+      // to the caller: an internal error's text can carry a path or a provider's state.
+      const detail = (err instanceof Error ? err.message : String(err)).replace(/[\r\n]+/g, " ");
+      process.stderr.write(`anvil simulator: request failed: ${detail}\n`);
       if (!res.headersSent) {
-        send(res, 500, { error: { code: "unknown_upstream_error", message } });
+        send(res, 500, {
+          error: {
+            code: "unknown_upstream_error",
+            message: "The simulator failed to handle the request.",
+          },
+        });
       }
     });
   });

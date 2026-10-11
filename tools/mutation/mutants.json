@@ -1542,6 +1542,692 @@
       "tests": [
         "packages/mcp-runtime/src/server.effects.test.ts"
       ]
+    },
+    {
+      "id": "console/host-header-names-this-server",
+      "file": "packages/console/src/server/http.ts",
+      "control": "Every request, GET included, must carry a Host of 127.0.0.1:<port> or localhost:<port>. Delete the check and a page whose domain was re-pointed at 127.0.0.1 (DNS rebinding) is same-origin with the socket, so it reads the API and the page that embeds the token with a plain fetch, no token or foreign Origin needed.",
+      "find": "      assertHostAllowed(req, opts);",
+      "replace": "      void assertHostAllowed;",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/no-auth-host-must-be-own-loopback",
+      "file": "packages/cli/src/commands/serve-fleet-http.ts",
+      "control": "With inbound auth unset the fleet listener answers only a loopback Host on the port the connection arrived on, on every route. Delete the check and a DNS-rebinding page can POST to /mcp or /call/* same-origin and drive the fleet's tools as the anonymous principal.",
+      "find": "    if (inbound.mode === \"none\" && !isOwnLoopbackHost(req.headers.host, req.socket.localPort)) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-http.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/readyz-binds-loopback-by-default",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "The stdio fleet's unauthenticated /readyz (bundle ids, tool counts, certification hashes) listens on 127.0.0.1 unless ANVIL_FLEET_READYZ_HOST names an address. Widen the default and every interface on the host serves it.",
+      "find": "const DEFAULT_READYZ_HOST = \"127.0.0.1\";",
+      "replace": "const DEFAULT_READYZ_HOST = \"0.0.0.0\";",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/stdio-session-outlives-connect",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "The stdio fleet keeps its bundle clients and /readyz until the session ends (transport close, stdin end, SIGTERM/SIGINT), not until McpServer.connect resolves. Resolve early and every tools/call answers \"Not connected\".",
+      "find": "    transport.onclose = end;",
+      "replace": "    resolve();",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/stdio-readyz-bind-error-reported",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "A /readyz bind failure (EADDRINUSE, EADDRNOTAVAIL) is one stderr line and the MCP session keeps running, instead of an unhandled 'error' event crashing the fleet.",
+      "find": "  http.on(\"error\", (error) => {",
+      "replace": "  http.on(\"unused\", (error: Error) => {",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/stdio-readyz-host-must-be-own-loopback",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "On a loopback bind the stdio fleet's unauthenticated /readyz answers only a loopback Host on its own port. Delete the check and a DNS-rebinding page reads every bundle id, tool count and certification hash.",
+      "find": "    if (loopbackOnly && !isOwnLoopbackHost(req.headers.host, req.socket.localPort)) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/no-auth-origin-must-be-own-loopback",
+      "file": "packages/cli/src/commands/serve-fleet-http.ts",
+      "control": "With inbound auth unset the HTTP fleet answers a request carrying an Origin header only when it is its own loopback origin (MCP Streamable HTTP: a present, invalid Origin is a 403). Delete the check and a page on another origin can drive the fleet's tools.",
+      "find": "      !isOwnLoopbackOrigin(origin, req.socket.localPort)",
+      "replace": "      false",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-http.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-token-endpoint-https",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "anvil auth login refuses a token endpoint that is not https (plain http only for 127.0.0.1) before opening the redirect listener, so the authorization code, PKCE verifier and client secret never travel in the clear.",
+      "find": "  const refusal = tokenEndpointRefusal(provider.tokenEndpoint);",
+      "replace": "  const refusal = undefined as string | undefined;",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-token-redirect-not-followed",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "The token exchange POST never follows a redirect, so the code and client credentials cannot be carried to a URL nobody checked.",
+      "find": "      redirect: \"error\",",
+      "replace": "      redirect: \"follow\",",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
+    },
+    {
+      "id": "adopt/probe-redirects-stay-same-origin",
+      "file": "packages/harness/src/mcp-probe.ts",
+      "control": "The adopt probe keeps MCP SDK 1.32's same-origin redirect policy, so --header values never follow a redirect to a host the operator did not name.",
+      "find": "      requestInit: { headers: resolveEnvRefs(options.headers ?? {}) },",
+      "replace": "      requestInit: { headers: resolveEnvRefs(options.headers ?? {}) },\n      redirectPolicy: \"follow\",",
+      "tests": [
+        "packages/harness/src/mcp-probe.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/stdio-eof-drains-in-flight",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "End of stdin waits for requests already read to be answered before the fleet closes; resolve at once and a piped tools/call loses its reply.",
+      "find": "      if (pending.size === 0) end();",
+      "replace": "      end();",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/host-names-this-server",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "With inbound auth off, a loopback connection is served only when Host names a loopback address (any port); dropping it hands the tool surface to a DNS-rebinding page.",
+      "find": "  if (!isOwnLoopbackAuthority(req.headers.host ?? \"\", null)) return \"host_not_allowed\";",
+      "replace": "  if (false) return \"host_not_allowed\";",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/origin-is-own-loopback-origin",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "With inbound auth off, a present Origin must be this server's own http loopback origin, on every connection; dropping it lets any page fire cross-origin simple requests at the server with no token.",
+      "find": "  if (origin === undefined) return undefined;",
+      "replace": "  if (origin === undefined || true) return undefined;",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/port-is-the-arrival-port",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "A present Origin must carry the port the connection arrived on, so another local origin (http://localhost:3000) is not treated as this server.",
+      "find": "  if (!match || (port !== null && (match[2] ?? \"80\") !== String(port))) return false;",
+      "replace": "  if (!match) return false;",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/runtime-gates-before-routing",
+      "file": "packages/mcp-runtime/src/serve.ts",
+      "control": "runtime/server.js runs the rebinding gate before every route when inbound auth is off. Killed by the source-order check because the harness boot tests use the BUILT bundle.",
+      "find": "  if (inboundAuth.mode === \"none\" && refuseRebindingRequest(req, res)) return;",
+      "replace": "  if (false) return;",
+      "tests": [
+        "packages/mcp-runtime/src/serve.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/sse-gates-before-routing",
+      "file": "packages/generators/src/mcp.ts",
+      "control": "The generated mcp/server-sse.js runs the same rebinding gate before every route when inbound auth is off.",
+      "find": "  if (inboundAuth.mode === \"none\" && refuseRebindingRequest(req, res)) return;",
+      "replace": "  if (false) return;",
+      "tests": [
+        "packages/generators/src/generators.test.ts",
+        "packages/harness/src/served-loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/open-listener-warning",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "A server with inbound auth off on every interface outside Cloud Run/Kubernetes says so on stderr at startup.",
+      "find": "  if (mode !== \"none\" || (address !== \"::\" && address !== \"0.0.0.0\")) return undefined;",
+      "replace": "  return undefined;",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "mock/binds-loopback-by-default",
+      "file": "packages/generators/src/mock.ts",
+      "control": "The generated mock (captures, scenario and fault control) listens on loopback unless ANVIL_MOCK_HOST opts in.",
+      "find": "const MOCK_HOST = process.env.ANVIL_MOCK_HOST || \"127.0.0.1\";",
+      "replace": "const MOCK_HOST = process.env.ANVIL_MOCK_HOST || undefined;",
+      "tests": [
+        "packages/generators/src/mock-server.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/refusal-nosniff",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "The 403 rebinding refusal is never content-sniffed.",
+      "find": "    \"x-content-type-options\": \"nosniff\",",
+      "replace": "",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "console/framing-forbidden",
+      "file": "packages/console/src/server/http.ts",
+      "control": "Every console response (the token-bearing page, its assets, every JSON reply and refusal) carries Content-Security-Policy: frame-ancestors 'none' and X-Frame-Options: DENY. Drop them and any site can frame the console under a decoy and turn the reviewer's own same-origin clicks into approvals, which neither the token nor the Origin/Sec-Fetch-Site checks can tell from real ones.",
+      "find": "const NO_FRAMING = {\n  \"content-security-policy\": \"frame-ancestors 'none'\",\n  \"x-frame-options\": \"DENY\",\n} as const;",
+      "replace": "const NO_FRAMING = {} as const;",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/facade-refuses-browser-origin",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "The unauthenticated facade refuses (403 permission_denied) any request carrying an Origin header, which browsers attach to every non-GET request and the runtime never sends. Delete the check and any web page can fire a text/plain simple POST (no CORS preflight) at POST /invoke and have it forwarded verbatim to the real broker.",
+      "find": "  if (req.headers.origin !== undefined) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/serve.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/facade-loopback-host-gate",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "Bound to loopback, the facade answers only a Host naming a loopback address with its own port. Delete the check and a DNS-rebinding page reaches it as its own origin, reading /readyz and any reply without an Origin header to refuse.",
+      "find": "  if (loopbackOnly && !isOwnLoopbackHostHeader(req.headers.host, req.socket.localPort)) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/serve.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/host-gate-checks-own-port",
+      "file": "packages/legacy-bridge/src/loopback.ts",
+      "control": "The facade's Host gate requires the port the request reached, not just a loopback name, so a page served from another local port (or a forward to a different port) is not treated as the bridge's own address.",
+      "find": "  if (!match || (match[2] ?? \"80\") !== String(port)) return false;",
+      "replace": "  if (!match) return false;",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/serve-enables-loopback-host-gate",
+      "file": "packages/legacy-bridge/src/serve.ts",
+      "control": "serveLegacyBridge turns the facade's Host gate on whenever it binds a loopback address. Pass false and `anvil legacy bridge serve` on 127.0.0.1 answers any Host, so DNS rebinding reaches the broker-facing facade again.",
+      "find": "    loopbackOnly: loopback,",
+      "replace": "    loopbackOnly: false,",
+      "tests": [
+        "packages/legacy-bridge/src/serve.test.ts"
+      ]
+    },
+    {
+      "id": "simulate/non-loopback-host-warns",
+      "file": "packages/cli/src/commands/simulate-serve.ts",
+      "control": "`anvil simulate serve --host <non-loopback>` prints one stderr warning that the unauthenticated simulator answers unnamed requests as the default (all-scope) principal. Delete it and exposing the simulator to the network is silent.",
+      "find": "  if (!isLoopbackHost(host)) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/cmd-simulate-serve.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/host-gate-checks-loopback-name",
+      "file": "packages/legacy-bridge/src/loopback.ts",
+      "control": "The facade's Host gate requires a loopback name, not just the right port.",
+      "find": "  return isLoopbackHost(match[1] as string);",
+      "replace": "  return true;",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/auth-code-refresh-https-only",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "The env-only authorization-code refresh never POSTs the refresh token and client secret to a token endpoint that is not HTTPS (or plain HTTP to the exact 127.0.0.1 literal), whether the endpoint came from AIR's provider or the *_TOKEN_ENDPOINT override -- without this check the grant crosses the network in clear text to wherever the endpoint names.",
+      "find": "    if (!isSendableOAuthEndpoint(tokenEndpoint)) return null;",
+      "replace": "    if (false) return null;",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/oauth-endpoint-loopback-exact",
+      "file": "packages/runtime/src/oauth-endpoint.ts",
+      "control": "The one OAuth-endpoint rule shared by auth.ts, vault.ts, and connect.ts admits plain HTTP only to the exact 127.0.0.1 hostname -- a prefix match would admit http://127.0.0.1.nip.io, a public DNS name that resolves wherever its owner likes.",
+      "find": "  return url.protocol === \"https:\" || (url.protocol === \"http:\" && url.hostname === \"127.0.0.1\");",
+      "replace": "  return url.protocol === \"https:\" || (url.protocol === \"http:\" && url.hostname.startsWith(\"127.0.0.1\"));",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/oauth-endpoint-plain-http-loopback-only",
+      "file": "packages/runtime/src/oauth-endpoint.ts",
+      "control": "The shared OAuth-endpoint rule refuses plain HTTP to any host but 127.0.0.1, so the env refresh resolver, the vault's refresh, and the connect flow all refuse http://idp.example.com -- dropping the hostname condition sends refresh tokens, codes, and client secrets in clear text from all three.",
+      "find": "  return url.protocol === \"https:\" || (url.protocol === \"http:\" && url.hostname === \"127.0.0.1\");",
+      "replace": "  return url.protocol === \"https:\" || url.protocol === \"http:\";",
+      "tests": [
+        "packages/runtime/src/auth.test.ts",
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/auth-code-refresh-no-redirect",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "The env-only refresh POST is sent with redirect: error, so a 307/308 from the token endpoint cannot make fetch re-POST the refresh token and client secret to the Location it names.",
+      "find": "        redirect: \"error\",",
+      "replace": "        redirect: \"follow\",",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/vault-refresh-https-only",
+      "file": "packages/runtime/src/vault.ts",
+      "control": "The vault's connector refresh never POSTs a person's refresh token and the gateway's client secret to a token endpoint that is not HTTPS (or plain HTTP to 127.0.0.1); it fails as connector/refresh_failed without marking the connection, whoever supplied the client config.",
+      "find": "      if (!isSendableOAuthEndpoint(client.tokenEndpoint)) throw refreshFailed(connector, account);",
+      "replace": "      if (false) throw refreshFailed(connector, account);",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/vault-refresh-no-redirect",
+      "file": "packages/runtime/src/vault.ts",
+      "control": "The vault's refresh POST is sent with redirect: error, so a 307/308 from the token endpoint cannot re-POST the refresh token and client secret to the Location it names; the redirect surfaces as connector/refresh_failed.",
+      "find": "          redirect: \"error\",",
+      "replace": "          redirect: \"follow\",",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/connect-profile-token-endpoint-https-only",
+      "file": "packages/runtime/src/connect.ts",
+      "control": "A connector whose token endpoint (AIR or ANVIL_CONNECT_<C>_TOKEN_ENDPOINT) is not HTTPS or http://127.0.0.1 resolves with a problem, so /connect/start answers 503 connector_not_configured naming the variable before a person is sent to consent.",
+      "find": "      if (!isSendableOAuthEndpoint(tokenEndpoint)) {",
+      "replace": "      if (false) {",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/connect-profile-authorization-endpoint-https-only",
+      "file": "packages/runtime/src/connect.ts",
+      "control": "A connector whose authorization endpoint (AIR or ANVIL_CONNECT_<C>_AUTHORIZATION_ENDPOINT) is not HTTPS or http://127.0.0.1 resolves with a problem, so the gateway never sends a person to sign in over clear text.",
+      "find": "      } else if (!isSendableOAuthEndpoint(authorizationEndpoint)) {",
+      "replace": "      } else if (false) {",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/connect-exchange-https-only",
+      "file": "packages/runtime/src/connect.ts",
+      "control": "The connect callback checks the token endpoint itself before the authorization-code exchange, so a profile built without connectorAuthProfile's check still never sends the client secret, code, and PKCE verifier over clear text.",
+      "find": "    if (!profile?.client || !isSendableOAuthEndpoint(profile.client.tokenEndpoint)) {",
+      "replace": "    if (!profile?.client) {",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/connect-exchange-no-redirect",
+      "file": "packages/runtime/src/connect.ts",
+      "control": "The authorization-code exchange is sent with redirect: error, so a 307/308 from the token endpoint cannot re-POST the client secret, code, and verifier to the Location it names; the redirect surfaces as 502 token_endpoint_unreachable.",
+      "find": "        redirect: \"error\",",
+      "replace": "        redirect: \"follow\",",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/connect-start-rechecks-authorization-endpoint",
+      "file": "packages/runtime/src/connect.ts",
+      "control": "ConnectFlow.start refuses to send a person to sign in at an authorization endpoint that is not HTTPS (or plain HTTP to 127.0.0.1) even for a profile built without connectorAuthProfile's check.",
+      "find": "      !isSendableOAuthEndpoint(profile.authorizationEndpoint)",
+      "replace": "      false",
+      "tests": [
+        "packages/runtime/src/vault.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/parse-target-never-throws",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "parseRequestTarget turns a request target the URL parser refuses (`GET //`, `GET http://[`, which Node's HTTP parser accepts) into `undefined` for the listener to answer 400. Let it throw and every async listener that parses req.url is one `curl http://host//` from an unhandled rejection that ends the process.",
+      "find": "  try {\n    return new URL(req.url ?? \"/\", \"http://localhost\");\n  } catch {\n    return undefined;\n  }",
+      "replace": "  return new URL(req.url ?? \"/\", \"http://localhost\");",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/guarded-server-answers-rejections",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "createGuardedServer answers a listener that rejects (500, or a destroyed socket once a response has started) instead of leaving the rejection unhandled. Delete the catch and any throw a route fails to anticipate ends runtime/server.js, mcp/server-sse.js, or the fleet listener.",
+      "find": "    new Promise((resolve) => resolve(listener(req, res))).catch((error: unknown) => {",
+      "replace": "    void listener(req, res);\n    void ((error: unknown) => {",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/guarded-server-catches-synchronous-throw",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "A listener that throws before its first await (or a non-async one) is caught too: the call runs inside the Promise executor, so a synchronous throw becomes a rejection the guard answers rather than an uncaught exception in the 'request' event.",
+      "find": "new Promise((resolve) => resolve(listener(req, res)))",
+      "replace": "listener(req, res)",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/guarded-server-destroys-started-response",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "Once a response has started, a failure destroys the socket so a client never mistakes a half-written body for a whole one. Without the headersSent branch the guard writes a second status line, which throws inside the catch handler and leaves the connection hanging.",
+      "find": "      if (res.headersSent) {\n        res.destroy();\n      } else {",
+      "replace": "      if (false) {\n        res.destroy();\n      } else {",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/internal-error-is-generic",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "The guard's 500 is a fixed envelope; the error's own text (which can carry a path, a vault location, or a provider's state) never reaches the caller.",
+      "find": "        res.end(JSON.stringify(INTERNAL_ERROR));",
+      "replace": "        res.end(JSON.stringify({ error: { code: \"internal_error\", message: String(error) } }));",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/reporter-cannot-crash",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "A reporter that throws cannot turn the guard's own catch handler into the unhandled rejection it exists to prevent.",
+      "find": "      try {\n        report(error);\n      } catch {\n        // A failing reporter must not become the unhandled rejection this guards against.\n      }",
+      "replace": "      report(error);",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/malformed-target-400",
+      "file": "packages/mcp-runtime/src/serve.ts",
+      "control": "runtime/server.js answers a request target the URL parser refuses with 400 instead of throwing in its async listener (with inbound OIDC that throw came before authorized(): an unauthenticated remote crash). Killed by the source-level check because the harness boot tests use the BUILT bundle.",
+      "find": "  const url = parseRequestTarget(req);\n  if (!url) return json(res, 400, MALFORMED_TARGET);",
+      "replace": "  const url = new URL(req.url ?? \"/\", \"http://localhost\");",
+      "tests": [
+        "packages/mcp-runtime/src/serve.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/listener-rejections-answered",
+      "file": "packages/mcp-runtime/src/serve.ts",
+      "control": "runtime/server.js's listener runs inside createGuardedServer, so any rejection a route does not catch is answered rather than ending the process. Killed by the source-level check because the harness boot tests use the BUILT bundle.",
+      "find": "const server = createGuardedServer(async (req, res) => {",
+      "replace": "const server = (await import(\"node:http\")).createServer(async (req, res) => {",
+      "tests": [
+        "packages/mcp-runtime/src/serve.test.ts"
+      ]
+    },
+    {
+      "id": "sse/malformed-target-400",
+      "file": "packages/generators/src/mcp.ts",
+      "control": "The generated mcp/server-sse.js answers a request target the URL parser refuses with 400 instead of throwing in its async listener (before authorized() when inbound auth is on).",
+      "find": "  const url = parseRequestTarget(req);\n  if (!url) return send(res, 400, MALFORMED_TARGET);",
+      "replace": "  const url = new URL(req.url ?? \"/\", \"http://localhost\");",
+      "tests": [
+        "packages/generators/src/generators.test.ts",
+        "packages/harness/src/served-malformed-target.test.ts"
+      ]
+    },
+    {
+      "id": "sse/listener-rejections-answered",
+      "file": "packages/generators/src/mcp.ts",
+      "control": "The generated mcp/server-sse.js listener runs inside createGuardedServer, so a rejection no route catches is answered rather than ending the process.",
+      "find": "const server = createGuardedServer(async (req, res) => {",
+      "replace": "const server = (await import(\"node:http\")).createServer(async (req, res) => {",
+      "tests": [
+        "packages/generators/src/generators.test.ts"
+      ]
+    },
+    {
+      "id": "sse/json-answers-nosniff",
+      "file": "packages/generators/src/mcp.ts",
+      "control": "Every JSON answer of the generated mcp/server-sse.js, the 401 refusals and the 400 included, carries X-Content-Type-Options: nosniff.",
+      "find": "const JSON_HEADERS = { \"content-type\": \"application/json\", \"x-content-type-options\": \"nosniff\" };",
+      "replace": "const JSON_HEADERS = { \"content-type\": \"application/json\" };",
+      "tests": [
+        "packages/generators/src/generators.test.ts",
+        "packages/harness/src/served-malformed-target.test.ts"
+      ]
+    },
+    {
+      "id": "mock/malformed-target-400",
+      "file": "packages/generators/src/mock.ts",
+      "control": "The generated mock answers a request target the URL parser refuses with 400; thrown in the request's 'end' handler it was an uncaught exception that ended the mock mid-suite.",
+      "find": "      url = new URL(req.url ?? \"/\", \"http://mock.local\");\n    } catch {",
+      "replace": "      url = new URL(req.url ?? \"/\", \"http://mock.local\");\n    } finally {\n    }\n    if (false) {",
+      "tests": [
+        "packages/generators/src/mock-server.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/malformed-target-400",
+      "file": "packages/cli/src/commands/serve-fleet-http.ts",
+      "control": "The HTTP fleet answers a request target the URL parser refuses with 400 (behind the loopback gate, ahead of the bearer check) instead of throwing in its async listener.",
+      "find": "    const url = parseRequestTarget(req);\n    if (!url) return json(res, 400, MALFORMED_TARGET);",
+      "replace": "    const url = new URL(req.url ?? \"/\", \"http://localhost\");",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-http.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/listener-rejections-answered",
+      "file": "packages/cli/src/commands/serve-fleet-http.ts",
+      "control": "The HTTP fleet's listener runs inside createGuardedServer: a failure no route catches (the vault directory gone from under a running gateway) is answered 500 and logged, never an unhandled rejection that ends `anvil serve mcp --fleet --http`.",
+      "find": "  const server: Server = createGuardedServer(async (req, res) => {",
+      "replace": "  const server: Server = (await import(\"node:http\")).createServer(async (req, res) => {",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-rest.test.ts"
+      ]
+    },
+    {
+      "id": "fleet-rest/bad-escape-404",
+      "file": "packages/cli/src/commands/serve-fleet-rest.ts",
+      "control": "POST /call/<tool> with a bad percent escape (`/call/%`) names no tool and answers 404 not_found; decodeURIComponent's URIError never escapes the route.",
+      "find": "  let tool: string;\n  try {\n    tool = decodeURIComponent(url.pathname.slice(\"/call/\".length));\n  } catch {\n    tool = \"\";\n  }",
+      "replace": "  const tool = decodeURIComponent(url.pathname.slice(\"/call/\".length));",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-rest.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/facade-malformed-target-400",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "The facade answers a request target the URL parser refuses with 400 bad_request instead of throwing in its async handler.",
+      "find": "    const url = URL.parse(req.url ?? \"/\", \"http://localhost\");",
+      "replace": "    const url = new URL(req.url ?? \"/\", \"http://localhost\");",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/facade-answers-unhandled-failure",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "Whatever the facade's handler fails to catch (a throwing onTelemetry) is answered 500, or the socket closed, instead of the `void handle()` unhandled rejection that ended the bridge.",
+      "find": "    handle(req, res).catch(() => {",
+      "replace": "    void handle(req, res);\n    void (() => {",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "console/malformed-target-refused",
+      "file": "packages/console/src/server/http.ts",
+      "control": "The console parses the request target without throwing and refuses a malformed one 400 inside run(), behind the Host gate, through the ordinary refusal path. A throwing parse outside run() was an uncaught exception that ended the console.",
+      "find": "    const url = URL.parse(req.url ?? \"/\", \"http://127.0.0.1\");",
+      "replace": "    const url = new URL(req.url ?? \"/\", \"http://127.0.0.1\");",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "request-guard/default-report-fixed-line",
+      "file": "packages/mcp-runtime/src/request-guard.ts",
+      "control": "With no reporter given (runtime/server.js, mcp/server-sse.js), a failure the guard answers is logged as one fixed stderr line; the error's own text, which can carry a path or a provider's state, never reaches the log.",
+      "find": "  report: (error: unknown) => void = () => console.error(\"HTTP request handling failed.\"),",
+      "replace": "  report: (error: unknown) => void = (error) => console.error(\"HTTP request handling failed.\", error),",
+      "tests": [
+        "packages/mcp-runtime/src/request-guard.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/failure-log-carries-no-error-text",
+      "file": "packages/cli/src/commands/serve-fleet-http.ts",
+      "control": "The fleet logs a failure its guard answered as one fixed line through its own io; the error's text (a vault path, say) is never written.",
+      "find": "  const reportFailure = () => log(\"anvil: a fleet request failed unexpectedly; answered 500.\");",
+      "replace": "  const reportFailure = (error: unknown) => log(`anvil: a fleet request failed unexpectedly; answered 500: ${String(error)}`);",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-rest.test.ts"
+      ]
+    },
+    {
+      "id": "mock/json-answers-nosniff",
+      "file": "packages/generators/src/mock.ts",
+      "control": "Every JSON answer of the generated mock carries X-Content-Type-Options: nosniff.",
+      "find": "  res.writeHead(status, { \"content-type\": \"application/json\", \"x-content-type-options\": \"nosniff\" });",
+      "replace": "  res.writeHead(status, { \"content-type\": \"application/json\" });",
+      "tests": [
+        "packages/generators/src/mock-server.test.ts"
+      ]
+    },
+    {
+      "id": "console/access-log-survives-unparsed-target",
+      "file": "packages/console/src/server/http.ts",
+      "control": "The console's access-log line does not dereference a request target it could not parse; reading the pathname of a null URL in the 'finish' handler is an uncaught exception that ends the console.",
+      "find": "${url?.pathname ?? \"-\"}",
+      "replace": "${(url as URL).pathname}",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/malformed-target-behind-host-gate",
+      "file": "packages/console/src/server/http.ts",
+      "control": "A malformed request target is refused only after the Host gate, so a rebinding page is told 403 like any other foreign Host.",
+      "find": "      assertHostAllowed(req, opts);\n      if (!url) throw new ConsoleError(\"console/invalid_request\", 400, \"Malformed request target.\");",
+      "replace": "      if (!url) throw new ConsoleError(\"console/invalid_request\", 400, \"Malformed request target.\");\n      assertHostAllowed(req, opts);",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/malformed-target-behind-loopback-gate",
+      "file": "packages/cli/src/commands/serve-fleet-http.ts",
+      "control": "Without inbound auth the fleet's Host/Origin gates answer before the malformed-target 400, so a rebinding page is told 403 whatever target it sends.",
+      "find": "  const server: Server = createGuardedServer(async (req, res) => {\n",
+      "replace": "  const server: Server = createGuardedServer(async (req, res) => {\n    if (!parseRequestTarget(req)) return json(res, 400, MALFORMED_TARGET);\n",
+      "tests": [
+        "packages/cli/src/commands/serve-fleet-http.test.ts"
+      ]
+    },
+    {
+      "id": "mock/fault-status-must-be-writable",
+      "file": "packages/generators/src/mock.ts",
+      "control": "POST /__anvil/fault refuses a status Node cannot write; stored unchecked, the next matched request threw RangeError in json() inside the 'end' handler and ended the mock.",
+      "find": "    if (!Number.isInteger(status) || status < 100 || status > 599) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/generators/src/mock-server.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/origin-on-every-connection",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "With inbound auth off, a present Origin must be this server's own loopback origin on every connection, not only loopback arrivals; dropping it lets a page DNS-rebound to the machine's LAN address, or reaching a docker -p port, call tools.",
+      "find": "  if (!isLoopbackAddress(localAddress)) return originRefusal(origin, localPort);",
+      "replace": "  if (!isLoopbackAddress(localAddress)) return undefined;",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/allowed-host-keeps-its-origin",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "A Host listed in ANVIL_INBOUND_ALLOWED_HOSTS is served only with no Origin or that host's own http(s) origin; dropping it lets any page reach a server behind a named reverse proxy.",
+      "find": "    return own === undefined || own === `http://${named}` || own === `https://${named}`",
+      "replace": "    return true",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "rebinding/allowed-host-exact-match",
+      "file": "packages/mcp-runtime/src/loopback-guard.ts",
+      "control": "ANVIL_INBOUND_ALLOWED_HOSTS entries match Host exactly; a substring match would serve mcp.example.com.attacker.example.",
+      "find": "entries.some((entry) => entry.trim().toLowerCase() === name)",
+      "replace": "entries.some((entry) => name.includes(entry.trim().toLowerCase()))",
+      "tests": [
+        "packages/mcp-runtime/src/loopback-guard.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-authorization-endpoint-sendable",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "anvil auth login refuses an authorization endpoint that is not https (plain http only for 127.0.0.1) before reading the client id or opening the redirect listener, so it never prints or --opens a cleartext sign-in page.",
+      "find": "  const signInRefusal = endpointRefusal(",
+      "replace": "  const signInRefusal = undefined && endpointRefusal(",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-listener-survives-malformed-target",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "The anvil auth login redirect listener answers a malformed request target (`//`) with 400 instead of throwing out of the handler and ending the login.",
+      "find": "        res.writeHead(400);",
+      "replace": "        throw new TypeError(\"Invalid URL\");",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-browser-open-no-cmd",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "On Windows the sign-in URL goes to rundll32 as one argument, never through cmd.exe, which treats the URL's & as a command separator.",
+      "find": "  if (platform === \"win32\") return [\"rundll32\", [\"url.dll,FileProtocolHandler\", url]];",
+      "replace": "  if (platform === \"win32\") return [\"cmd\", [\"/c\", \"start\", \"\", url]];",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
     }
   ]
 }

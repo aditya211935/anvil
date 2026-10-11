@@ -218,6 +218,45 @@ describe("cookie parameters", () => {
   });
 });
 
+describe("an internal failure is not described to the caller", () => {
+  it("answers 500 with a fixed message and keeps the detail on stderr", async () => {
+    const reported: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string) => {
+      reported.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    // A provider that throws is answered as 503 by the simulator itself; what reaches
+    // the server's last-resort catch is a failure of the server's own plumbing, such
+    // as a trace reporter that throws while reporting a failed trace write.
+    const sim = new Simulator(air, simulatorDefinitionFor(air), { provider: echoProvider() });
+    const http = await serveSimulatorHttp(sim, air, {
+      trace: {
+        write: () => {
+          throw new Error("disk full");
+        },
+      },
+      onTraceError: () => {
+        throw new Error("cannot open /srv/state/ledger.db");
+      },
+    });
+    try {
+      const res = await fetch(`${http.url}/session`, { headers: { cookie: "session_id=s-1" } });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        error: {
+          code: "unknown_upstream_error",
+          message: "The simulator failed to handle the request.",
+        },
+      });
+    } finally {
+      process.stderr.write = original;
+      await http.close();
+    }
+    expect(reported.join("")).toContain("request failed: cannot open /srv/state/ledger.db");
+  });
+});
+
 describe("the call trace never changes a call's outcome", () => {
   it("refuses an unwritable trace path when the sink is opened, not on the first call", () => {
     expect(() => new JsonlTrace(join(tmp, "no-such-dir", "trace.jsonl"))).toThrow(

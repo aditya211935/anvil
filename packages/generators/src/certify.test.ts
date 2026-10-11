@@ -43,7 +43,7 @@ const clock = (iso: string) => () => iso;
 const failedIds = (cert: Certification) =>
   cert.checks.filter((c) => c.status === "failed").map((c) => c.id);
 
-const sha = (character = "a") => `sha256:${character.repeat(64)}`;
+const sha256Digest = (character = "a") => `sha256:${character.repeat(64)}`;
 
 function gatewayReceipt(
   overrides: Partial<GatewayImportReceiptView> = {},
@@ -54,7 +54,7 @@ function gatewayReceipt(
     viewType: "anvil.gateway-import-receipt-view",
     redacted: true,
     importId: "gwi-0123456789abcdef",
-    receiptDigest: sha(),
+    receiptDigest: sha256Digest(),
     lineage: { status: "bound" },
     privateReceipt: {
       workspaceRoot: "$WORKSPACE",
@@ -64,7 +64,7 @@ function gatewayReceipt(
     selection: {
       vendor: "fixture",
       apiId: "payments",
-      export: { format: "text", sha256: sha(), bytes: 10 },
+      export: { format: "text", sha256: sha256Digest(), bytes: 10 },
     },
     inventoryDigest: "inventory-digest",
     contract: {
@@ -76,7 +76,7 @@ function gatewayReceipt(
       },
       compilerSource: {
         snapshotId: "src-1",
-        sourceHash: sha(),
+        sourceHash: sha256Digest(),
         entrypoint: "openapi.yaml",
       },
     },
@@ -309,7 +309,7 @@ describe("certification: gateway provenance", () => {
     [
       "receiptDigest",
       (declaration: Record<string, unknown>) => {
-        declaration.receiptDigest = sha("b");
+        declaration.receiptDigest = sha256Digest("b");
       },
     ],
     [
@@ -321,7 +321,7 @@ describe("certification: gateway provenance", () => {
     [
       "outputDigest",
       (declaration: Record<string, unknown>) => {
-        declaration.outputDigest = sha("b");
+        declaration.outputDigest = sha256Digest("b");
       },
     ],
     [
@@ -360,7 +360,7 @@ describe("certification: gateway provenance", () => {
     const built = capabilityBundleWithParentGateway();
     const receiptPath = "provenance/parent-gateway-import.receipt.json";
     const receipt = JSON.parse(built.bundle.files[receiptPath] as string);
-    receipt.output.digest = sha("b");
+    receipt.output.digest = sha256Digest("b");
     const manifest = JSON.parse(built.bundle.files["bundle.json"] as string);
     manifest.parentGatewayImport.outputDigest = receipt.output.digest;
     manifest.parentGatewayImport.receiptViewDigest = hashCanonical(receipt);
@@ -388,7 +388,7 @@ describe("certification: gateway provenance", () => {
       lineage: {
         status: "stale",
         reason: "parent output changed",
-        currentOutputDigest: sha("b"),
+        currentOutputDigest: sha256Digest("b"),
         currentOutputFiles: [],
       },
       blockers: [

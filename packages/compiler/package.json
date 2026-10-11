@@ -32,11 +32,11 @@
     "@anvil/air": "workspace:*",
     "@anvil/grammar": "workspace:*",
     "@scalar/openapi-parser": "^0.28.8",
-    "fast-xml-parser": "^5.9.3",
+    "fast-xml-parser": "^5.11.2",
     "fflate": "^0.8.3",
     "gpt-tokenizer": "^3.4.0",
     "graphql": "^17.0.2",
-    "js-yaml": "^4.3.0",
+    "js-yaml": "^4.3.2",
     "node-sql-parser": "^5.4.0",
     "protobufjs": "^8.7.0",
     "swagger2openapi": "^7.0.8",
@@ -49,6 +49,6 @@
     "fast-check": "^4.9.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }

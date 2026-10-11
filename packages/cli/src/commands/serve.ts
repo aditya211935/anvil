@@ -1,4 +1,5 @@
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
+import { BlockList, isIP } from "node:net";
 import type { CertificationVerdict } from "@anvil/generators";
 import type { FleetBundleInput, FleetServer } from "@anvil/mcp-runtime";
 import { loadAir } from "@anvil/refinement";
@@ -9,9 +10,11 @@ import type {
   Principal,
   RuntimeConfig,
 } from "@anvil/runtime";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { isOwnLoopbackHost, json } from "./fleet-http-io.js";
 import { measuredAccuracyFromReport } from "./ladder-status.js";
 import { annotate } from "./meta.js";
 
@@ -412,28 +415,74 @@ async function runServeFleet(workspaceRoot: string, io: CliIO): Promise<number> 
   }
   const { fleet, bundleIds } = built;
 
-  const readyzPort = parseReadyzPort(process.env.ANVIL_FLEET_READYZ_PORT);
-  const readyzHttp = createServer((req, res) => {
-    if (req.url === "/readyz") {
-      const body = fleet.readyz();
-      res.writeHead(body.ready ? 200 : 503, { "content-type": "application/json" });
-      res.end(JSON.stringify(body));
-      return;
-    }
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: { code: "not_found", message: "Only /readyz is served." } }));
-  });
-  readyzHttp.listen(readyzPort);
+  const readyzBind = readyzBindFromEnv(process.env);
+  const readyzHttp = serveReadyz(fleet, readyzBind, (line) => io.err(line));
 
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   io.err(
     `anvil: serving fleet of ${bundleIds.length} bundle(s) over stdio ` +
-      `(${bundleIds.join(", ")}); /readyz on :${readyzPort}`,
+      `(${bundleIds.join(", ")}); /readyz on ${formatHostPort(readyzBind)}`,
   );
-  await fleet.server.connect(new StdioServerTransport());
+  // `connect` resolves once the transport is reading stdin, not when the
+  // session ends: the fleet and /readyz stay up until it does.
+  const transport = new StdioServerTransport();
+  const ended = stdioSessionEnded(transport);
+  await fleet.server.connect(transport);
+  await ended;
+  await fleet.server.close();
   readyzHttp.close();
+  readyzHttp.closeAllConnections();
   await fleet.close();
   return 0;
+}
+
+/**
+ * Resolves when a stdio MCP session is over: the transport closed, stdin ended
+ * (`StdioServerTransport` never closes itself at end of input), or the process
+ * was told to stop. End of input first waits for requests already read to be
+ * answered, as the single-bundle server does; a signal or a closed transport
+ * does not. Call it before `connect`, which chains an `onclose` and an
+ * `onmessage` that are already set and leaves `send` as it finds it.
+ */
+export function stdioSessionEnded(
+  transport: Pick<Transport, "onclose" | "onmessage" | "send">,
+  stdin: NodeJS.ReadableStream = process.stdin,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const pending = new Set<unknown>();
+    let draining = false;
+    const end = () => {
+      stdin.off("end", drain);
+      stdin.off("close", drain);
+      process.off("SIGTERM", end);
+      process.off("SIGINT", end);
+      resolve();
+    };
+    const drain = () => {
+      draining = true;
+      if (pending.size === 0) end();
+    };
+    const settle = (id: unknown) => {
+      pending.delete(id);
+      if (draining && pending.size === 0) end();
+    };
+    transport.onmessage = (message) => {
+      if ("method" in message && "id" in message) pending.add(message.id);
+      else if ("method" in message && message.method === "notifications/cancelled") {
+        settle((message.params as { requestId?: unknown } | undefined)?.requestId);
+      }
+    };
+    const send = transport.send.bind(transport);
+    transport.send = async (message, options) => {
+      await send(message, options);
+      if (!("method" in message) && "id" in message) settle(message.id);
+    };
+    transport.onclose = end;
+    stdin.on("end", drain);
+    stdin.on("close", drain);
+    process.on("SIGTERM", end);
+    process.on("SIGINT", end);
+  });
 }
 
 /**
@@ -469,9 +518,90 @@ function readCertification(
 }
 
 const DEFAULT_READYZ_PORT = 8787;
+const DEFAULT_READYZ_HOST = "127.0.0.1";
+
+export interface ReadyzBind {
+  host: string;
+  port: number;
+}
+
+/**
+ * Where the stdio fleet's `/readyz` listens. The body names every bundle, its
+ * tool count and its certification hash and the listener has no auth, so it is
+ * loopback-only unless `ANVIL_FLEET_READYZ_HOST` (an IP address, such as
+ * `0.0.0.0` for a container whose probe comes from outside) says otherwise.
+ * Like the port, an unusable value falls back to the default.
+ */
+export function readyzBindFromEnv(env: NodeJS.ProcessEnv): ReadyzBind {
+  return {
+    host: parseReadyzHost(env.ANVIL_FLEET_READYZ_HOST),
+    port: parseReadyzPort(env.ANVIL_FLEET_READYZ_PORT),
+  };
+}
 
 function parseReadyzPort(raw: string | undefined): number {
   if (!raw) return DEFAULT_READYZ_PORT;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : DEFAULT_READYZ_PORT;
+}
+
+function parseReadyzHost(raw: string | undefined): string {
+  const host = raw?.trim();
+  return host && isIP(host) !== 0 ? host : DEFAULT_READYZ_HOST;
+}
+
+function formatHostPort({ host, port }: ReadyzBind): string {
+  return `${isIP(host) === 6 ? `[${host}]` : host}:${port}`;
+}
+
+// Every spelling of a loopback bind address (127.0.0.0/8, ::1, ::ffff:127.0.0.1,
+// 0000::1, ...), so an unusual one can't switch the Host check off.
+const LOOPBACK = new BlockList();
+LOOPBACK.addSubnet("127.0.0.0", 8, "ipv4");
+LOOPBACK.addAddress("::1", "ipv6");
+
+/**
+ * The stdio fleet's `/readyz` listener. A bind it cannot take (the port in use,
+ * an address the host does not have) is reported through `log` and leaves the
+ * MCP session running.
+ */
+export function serveReadyz(
+  fleet: Pick<FleetServer, "readyz">,
+  bind: ReadyzBind,
+  log: (line: string) => void,
+): Server {
+  // On a loopback bind, loopback is the only gate, and DNS rebinding walks
+  // around it (see serve-fleet-http.ts): answer only requests addressed to the
+  // address and port this listener is on. A non-loopback bind serves a
+  // container's probe, which may use any name.
+  const loopbackOnly = LOOPBACK.check(bind.host, isIP(bind.host) === 6 ? "ipv6" : "ipv4");
+  const http = createServer((req, res) => {
+    if (loopbackOnly && !isOwnLoopbackHost(req.headers.host, req.socket.localPort)) {
+      req.resume();
+      json(res, 403, {
+        error: {
+          code: "host_not_allowed",
+          message:
+            "This listener answers only requests addressed to its own loopback address and port.",
+        },
+      });
+      return;
+    }
+    if (req.url === "/readyz") {
+      const body = fleet.readyz();
+      res.writeHead(body.ready ? 200 : 503, {
+        "content-type": "application/json",
+        "x-content-type-options": "nosniff",
+      });
+      res.end(JSON.stringify(body));
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json", "x-content-type-options": "nosniff" });
+    res.end(JSON.stringify({ error: { code: "not_found", message: "Only /readyz is served." } }));
+  });
+  http.on("error", (error) => {
+    log(`anvil: /readyz not served on ${formatHostPort(bind)}: ${error.message}`);
+  });
+  http.listen(bind.port, bind.host);
+  return http;
 }

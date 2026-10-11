@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,8 +8,8 @@ import type { AirDocument } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { credentialProfileName, envPrefix } from "@anvil/runtime";
-import { afterEach, describe, expect, it } from "vitest";
-import { runAuthLogin, runAuthStatus } from "./auth.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { browserOpenCommand, runAuthLogin, runAuthStatus } from "./auth.js";
 
 const examples = fileURLToPath(new URL("../../../../examples/payments/", import.meta.url));
 const read = (rel: string) => readFileSync(join(examples, rel), "utf8");
@@ -43,6 +43,19 @@ function watchedIO(onLine: (line: string) => void) {
   };
 }
 
+/** The status the server on 127.0.0.1:`port` answers for a raw request target `fetch` would normalise. */
+function rawTargetStatus(port: number, target: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: "127.0.0.1", port, path: target }, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.setTimeout(2_000, () => req.destroy(new Error(`${target} was not answered`)));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 /** A minimal fake IdP: /authorize redirects with a code, /token validates PKCE and returns tokens. */
 function fakeIdp(opts: {
   expectClientId: string;
@@ -51,6 +64,8 @@ function fakeIdp(opts: {
   omitRefreshToken?: boolean;
   /** Every redirect_uri this IdP was sent, in request order (authorize, then token). */
   capturedRedirectUris?: string[];
+  /** /token answers 307 to /elsewhere, which records every request it receives. */
+  redirectToken?: { reachedElsewhere: string[] };
 }): Promise<{ server: Server; base: string }> {
   const codeChallenges = new Map<string, string>();
   return new Promise((resolve) => {
@@ -68,6 +83,17 @@ function fakeIdp(opts: {
         target.searchParams.set("state", state);
         res.writeHead(302, { location: target.toString() });
         res.end();
+        return;
+      }
+      if (url.pathname === "/token" && opts.redirectToken) {
+        res.writeHead(307, { location: "/elsewhere" });
+        res.end();
+        return;
+      }
+      if (url.pathname === "/elsewhere") {
+        opts.redirectToken?.reachedElsewhere.push(`${req.method} ${url.pathname}`);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "a", refresh_token: "stolen-refresh-token" }));
         return;
       }
       if (url.pathname === "/token") {
@@ -292,12 +318,189 @@ operations:
     expect(io.stderr.join(" ")).toContain("CLIENT_ID");
   });
 
+  it("refuses a plain-http token endpoint before opening the redirect listener or touching the network", async () => {
+    const { dir, air } = await compiledBundle(`
+operations:
+  createRefund:
+    auth:
+      type: oauth2_authorization_code
+      credential_profile: end_user_flow
+      provider:
+        authorization_endpoint: https://idp.example.com/authorize
+        token_endpoint: http://example.com/token
+`);
+    const op = air.operations.find((o) => o.canonicalName === "create_refund") ?? air.operations[0];
+    if (!op) throw new Error("fixture: no operation compiled");
+    const prefix = envPrefix(credentialProfileName("test", op.auth));
+    process.env[`${prefix}_CLIENT_ID`] = "client-1";
+    process.env[`${prefix}_CLIENT_SECRET`] = "shh";
+    cleanupEnv.push(`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const io = watchedIO(() => {
+        throw new Error("must not print an authorize URL for an http token endpoint");
+      });
+      const code = await runAuthLogin(
+        dir,
+        { profile: "test", timeoutSeconds: "1" },
+        io,
+        freshDir(),
+      );
+      expect(code).toBe(1);
+      expect(io.stderr.join(" ")).toContain("provider.token_endpoint must use https");
+      expect(io.stderr.join(" ")).toContain("http://example.com");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("refuses a plain-http authorization endpoint before reading the client id, listening, or touching the network", async () => {
+    const { dir } = await compiledBundle(`
+operations:
+  createRefund:
+    auth:
+      type: oauth2_authorization_code
+      credential_profile: end_user_flow
+      provider:
+        authorization_endpoint: http://idp.example.com/authorize
+        token_endpoint: https://idp.example.com/token
+`);
+    // No *_CLIENT_ID set: the endpoint refusal must come first.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const io = watchedIO(() => {
+        throw new Error("must not print an authorize URL for an http authorization endpoint");
+      });
+      const code = await runAuthLogin(
+        dir,
+        { profile: "test", timeoutSeconds: "1", open: true },
+        io,
+        freshDir(),
+      );
+      expect(code).toBe(1);
+      const stderr = io.stderr.join(" ");
+      expect(stderr).toContain("provider.authorization_endpoint must use https");
+      expect(stderr).toContain("http://idp.example.com");
+      expect(stderr).not.toContain("CLIENT_ID");
+      expect(io.stdout).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("answers a malformed request target on the redirect listener with 400 and keeps waiting", async () => {
+    const idp = await fakeIdp({ expectClientId: "client-1" });
+    try {
+      const { dir, air } = await compiledBundle(`
+operations:
+  createRefund:
+    auth:
+      type: oauth2_authorization_code
+      credential_profile: end_user_flow
+      provider:
+        authorization_endpoint: ${idp.base}/authorize
+        token_endpoint: ${idp.base}/token
+        redirect_uri: http://127.0.0.1:0/callback
+`);
+      const op =
+        air.operations.find((o) => o.canonicalName === "create_refund") ?? air.operations[0];
+      if (!op) throw new Error("fixture: no operation compiled");
+      const profileName = credentialProfileName("test", op.auth);
+      const prefix = envPrefix(profileName);
+      process.env[`${prefix}_CLIENT_ID`] = "client-1";
+      cleanupEnv.push(`${prefix}_CLIENT_ID`);
+
+      const credDir = freshDir();
+      let listenerPort = 0;
+      const statuses: number[] = [];
+      const io = watchedIO((line) => {
+        const listening = /listening on http:\/\/127\.0\.0\.1:(\d+)\//.exec(line);
+        if (listening?.[1]) listenerPort = Number(listening[1]);
+        const match = /^ {2}(http:\/\/[^\s]+)$/.exec(line);
+        if (!match?.[1]) return;
+        const authorizeUrl = match[1];
+        // `//` is no URL; it used to throw out of the request handler and end the process.
+        void rawTargetStatus(listenerPort, "//")
+          .then((status) => statuses.push(status))
+          .finally(() => fetch(authorizeUrl));
+      });
+      const code = await runAuthLogin(dir, { profile: "test", timeoutSeconds: "10" }, io, credDir);
+      expect(statuses).toEqual([400]);
+      expect(code).toBe(0);
+      expect(existsSync(join(credDir, `${profileName}.json`))).toBe(true);
+    } finally {
+      idp.server.close();
+    }
+  });
+
+  it("never follows a redirect from the token endpoint with the code and client secret", async () => {
+    const reachedElsewhere: string[] = [];
+    const idp = await fakeIdp({
+      expectClientId: "client-1",
+      expectClientSecret: "shh",
+      redirectToken: { reachedElsewhere },
+    });
+    try {
+      const { dir, air } = await compiledBundle(`
+operations:
+  createRefund:
+    auth:
+      type: oauth2_authorization_code
+      credential_profile: end_user_flow
+      provider:
+        authorization_endpoint: ${idp.base}/authorize
+        token_endpoint: ${idp.base}/token
+        redirect_uri: http://127.0.0.1:0/callback
+`);
+      const op =
+        air.operations.find((o) => o.canonicalName === "create_refund") ?? air.operations[0];
+      if (!op) throw new Error("fixture: no operation compiled");
+      const profileName = credentialProfileName("test", op.auth);
+      const prefix = envPrefix(profileName);
+      process.env[`${prefix}_CLIENT_ID`] = "client-1";
+      process.env[`${prefix}_CLIENT_SECRET`] = "shh";
+      cleanupEnv.push(`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`);
+
+      const credDir = freshDir();
+      const io = watchedIO((line) => {
+        const match = /^ {2}(http:\/\/[^\s]+)$/.exec(line);
+        if (match?.[1]) void fetch(match[1]);
+      });
+      const code = await runAuthLogin(dir, { profile: "test", timeoutSeconds: "10" }, io, credDir);
+      expect(code).toBe(1);
+      expect(io.stderr.join(" ")).toContain("redirect, which is not followed");
+      expect(reachedElsewhere).toEqual([]);
+      expect(existsSync(join(credDir, `${profileName}.json`))).toBe(false);
+    } finally {
+      idp.server.close();
+    }
+  });
+
   it("refuses when the bundle has no oauth2_authorization_code operation", async () => {
     const { dir } = await compiledBundle("");
     const io = watchedIO(() => {});
     const code = await runAuthLogin(dir, { profile: "test", timeoutSeconds: "1" }, io, freshDir());
     expect(code).toBe(1);
     expect(io.stderr.join(" ")).toContain("No oauth2_authorization_code operation");
+  });
+});
+
+describe("browserOpenCommand", () => {
+  // Every authorize URL carries `&`; cmd.exe would treat it as a command separator.
+  const url = "https://idp.example.com/authorize?response_type=code&client_id=c&state=s";
+
+  it("hands the URL to rundll32 as one argument on Windows, never to cmd", () => {
+    expect(browserOpenCommand(url, "win32")).toEqual([
+      "rundll32",
+      ["url.dll,FileProtocolHandler", url],
+    ]);
+  });
+
+  it("uses open on macOS and xdg-open elsewhere", () => {
+    expect(browserOpenCommand(url, "darwin")).toEqual(["open", [url]]);
+    expect(browserOpenCommand(url, "linux")).toEqual(["xdg-open", [url]]);
   });
 });
 

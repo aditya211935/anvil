@@ -44,12 +44,25 @@ export class ConsoleError extends Error {
   }
 }
 
-/** The one 403 the security gate emits; the message never says which check failed first. */
+/**
+ * The mutation gate's 403 (token, Origin, Sec-Fetch-Site): one message for all
+ * three, so a refusal never says which of them failed. The Host gate has its
+ * own message (`hostNotAllowed`) under the same code.
+ */
 export function forbidden(): ConsoleError {
   return new ConsoleError(
     "console/forbidden",
     403,
     "Mutations require the per-process console token and a same-origin request.",
+  );
+}
+
+/** The 403 for a Host header that is not this server's own address (DNS rebinding). */
+export function hostNotAllowed(): ConsoleError {
+  return new ConsoleError(
+    "console/forbidden",
+    403,
+    "The Host header must be 127.0.0.1 or localhost with the console's own port.",
   );
 }
 

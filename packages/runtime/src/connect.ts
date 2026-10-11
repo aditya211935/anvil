@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { AirDocument, AuthRequirement } from "@anvil/air";
 import { DEFAULT_ACCOUNT } from "./grants.js";
+import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 import {
   type ConnectionVault,
   type OAuthClientConfig,
@@ -36,7 +37,7 @@ export interface ConnectorAuthProfile {
   issuer?: string;
   /** Gateway-side OAuth client, from `ANVIL_CONNECT_<CONNECTOR>_*`. */
   client?: OAuthClientConfig;
-  /** Why an `oauth` connector cannot run the flow yet (missing endpoint or client id). */
+  /** Why an `oauth` connector cannot run the flow yet (missing or non-HTTPS endpoint, or no client id). */
   problem?: string;
 }
 
@@ -50,7 +51,8 @@ export function connectEnvPrefix(connector: string): string {
  * and the gateway's own client configuration. The OAuth client id and secret
  * are gateway configuration (`ANVIL_CONNECT_<CONNECTOR>_CLIENT_ID` /
  * `_CLIENT_SECRET`), never AIR; `_AUTHORIZATION_ENDPOINT`, `_TOKEN_ENDPOINT`,
- * `_ISSUER`, and `_SCOPES` override what AIR declares.
+ * `_ISSUER`, and `_SCOPES` override what AIR declares. Either endpoint, from
+ * either source, must be HTTPS or plain HTTP to `127.0.0.1` (oauth-endpoint.ts).
  */
 export function connectorAuthProfile(
   connector: string,
@@ -99,6 +101,14 @@ export function connectorAuthProfile(
         ...(clientSecret ? { clientSecret } : {}),
         clientAuth,
       };
+      // The problem stops `start`; the client stays, so the vault's refresh
+      // reaches its own endpoint check (a transient failure) instead of the
+      // missing-client branch, which would mark every connection for reconnect.
+      if (!isSendableOAuthEndpoint(tokenEndpoint)) {
+        profile.problem = `connector '${connector}' has a token endpoint that is neither HTTPS nor http://127.0.0.1 (set ${prefix}TOKEN_ENDPOINT)`;
+      } else if (!isSendableOAuthEndpoint(authorizationEndpoint)) {
+        profile.problem = `connector '${connector}' has an authorization endpoint that is neither HTTPS nor http://127.0.0.1 (set ${prefix}AUTHORIZATION_ENDPOINT)`;
+      }
     }
     return profile;
   }
@@ -193,7 +203,12 @@ export class ConnectFlow {
       };
     }
     if (profile.kind === "static") return { ok: true, kind: "static", submit: "/connect/api-key" };
-    if (!profile.client || !profile.authorizationEndpoint || profile.problem) {
+    if (
+      !profile.client ||
+      !profile.authorizationEndpoint ||
+      profile.problem ||
+      !isSendableOAuthEndpoint(profile.authorizationEndpoint)
+    ) {
       return {
         ok: false,
         status: 503,
@@ -265,7 +280,9 @@ export class ConnectFlow {
       };
     }
     const profile = this.options.profiles.get(pending.connector);
-    if (!profile?.client) {
+    // The exchange carries the client secret, the code, and the verifier: the
+    // token endpoint is checked here too, whoever built the profile.
+    if (!profile?.client || !isSendableOAuthEndpoint(profile.client.tokenEndpoint)) {
       return {
         ok: false,
         status: 400,
@@ -296,6 +313,8 @@ export class ConnectFlow {
         method: "POST",
         headers: request.headers,
         body: request.body,
+        // A 307/308 would re-POST the same credentials to wherever it points.
+        redirect: "error",
       });
     } catch {
       return {

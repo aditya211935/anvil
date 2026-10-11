@@ -50,9 +50,13 @@ The server binds `127.0.0.1` only. Each process mints a random token, injects
 it into the served page, and requires it as `X-Anvil-Console-Token` on every
 non-GET request; non-GET requests whose `Origin` is not the server's own are
 rejected; no CORS headers are ever emitted; bodies are JSON only and validated
-against the contract before any library function runs. The full contract is
-the comment block at the top of `src/contract.ts` — it is the specification
-the server lane implements and the review reads against.
+against the contract before any library function runs. Every request, GET
+included, must name the server in its `Host` header (`127.0.0.1:<port>` or
+`localhost:<port>`), which refuses a DNS-rebinding page; and every response
+forbids framing (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), so no
+other page can overlay the console and borrow the reviewer's clicks. The full
+contract is the comment block at the top of `src/contract.ts` — it is the
+specification the server lane implements and the review reads against.
 
 ## Workspace and bundle views
 

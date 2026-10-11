@@ -254,10 +254,18 @@ export async function verifyInboundToken(
   // kind can never be replayed under another.
   const branchyard = config.mode === "branchyard";
   if (branchyard ? header.alg !== "EdDSA" : header.alg !== "RS256" && header.alg !== "ES256") {
+    // `alg` is the caller's own, still-unverified header value and is echoed in the
+    // body and in WWW-Authenticate. A control character other than tab (CR, LF, NUL,
+    // DEL, …) or a non-Latin-1 character in a header value makes `writeHead` throw
+    // (ERR_INVALID_CHAR), which nothing around the request handler catches. Keep only
+    // word characters and "-" (every JWS alg name fits) and bound the length.
+    const alg = String(header.alg)
+      .replace(/[^\w-]/g, "?")
+      .slice(0, 32);
     return deny(
       401,
       "invalid_token",
-      `Unsupported JWT alg "${header.alg}" (expected ${branchyard ? "EdDSA" : "RS256 or ES256"}).`,
+      `Unsupported JWT alg "${alg}" (expected ${branchyard ? "EdDSA" : "RS256 or ES256"}).`,
       config,
     );
   }

@@ -237,6 +237,59 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
     // OBO credential resolution works on this transport too.
     expect(sse).toContain("const inbound = currentInboundIdentity();");
     expect(sse).toContain("principal: boot.principalFor(inbound)");
+
+    // With inbound auth off, the same DNS-rebinding gate as runtime/server.js —
+    // imported from @anvil/mcp-runtime, not restated — answers before any route,
+    // health included. Booted for real in @anvil/harness served-loopback-guard.
+    expect(sse).toContain("  refuseRebindingRequest,\n");
+    const handler = sse.indexOf("const server = createGuardedServer(async (req, res) => {");
+    const gate = sse.indexOf(
+      'if (inboundAuth.mode === "none" && refuseRebindingRequest(req, res)) return;',
+    );
+    expect(handler).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(handler);
+    expect(gate).toBeLessThan(sse.indexOf('url.pathname === "/healthz"'));
+    const warn = sse.indexOf("warnWhenOpenWithoutAuth(server, inboundAuth.mode);");
+    expect(warn).toBeGreaterThan(-1);
+    expect(warn).toBeLessThan(sse.indexOf("server.listen("));
+  });
+
+  it("answers a malformed request target 400 and any listener failure, never crashing", () => {
+    // Node's parser admits targets `new URL` throws on (`GET //`, `GET http://[`);
+    // thrown in the async listener, that was an unhandled rejection and the
+    // process exited. Both guards come from @anvil/mcp-runtime (unit-tested in
+    // request-guard.test.ts, booted for real in @anvil/harness
+    // served-malformed-target), not restated here.
+    const sse = generateMcpSseServerSource(air);
+    for (const name of ["createGuardedServer", "MALFORMED_TARGET", "parseRequestTarget"]) {
+      expect(sse).toContain(`  ${name},\n`);
+    }
+    expect(sse).not.toContain("createServer(");
+    expect(sse).not.toMatch(/new URL\(req\.url/);
+    const handler = sse.indexOf("const server = createGuardedServer(async (req, res) => {");
+    const gate = sse.indexOf("refuseRebindingRequest(req, res)) return;");
+    const parse = sse.indexOf("const url = parseRequestTarget(req);");
+    const refuse = sse.indexOf("if (!url) return send(res, 400, MALFORMED_TARGET);");
+    expect(handler).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(handler);
+    expect(parse).toBeGreaterThan(gate);
+    expect(refuse).toBeGreaterThan(parse);
+    expect(refuse).toBeLessThan(sse.indexOf('url.pathname === "/healthz"'));
+  });
+
+  it("marks every JSON answer nosniff, the 401 refusals included", () => {
+    const sse = generateMcpSseServerSource(air);
+    const headers = sse.indexOf(
+      'const JSON_HEADERS = { "content-type": "application/json", "x-content-type-options": "nosniff" };',
+    );
+    // Declared before anything that writes it.
+    expect(headers).toBeGreaterThan(-1);
+    expect(headers).toBeLessThan(sse.indexOf("async function authorized(req, res)"));
+    expect(headers).toBeLessThan(sse.indexOf("function send(res, status, body)"));
+    expect(sse).toContain("res.writeHead(status, JSON_HEADERS);");
+    expect(sse.split("      ...JSON_HEADERS,\n").length - 1).toBe(2);
+    // No JSON content-type is written anywhere but through JSON_HEADERS.
+    expect(sse.split('"content-type": "application/json"').length - 1).toBe(1);
   });
 });
 
@@ -642,6 +695,17 @@ describe("bundle", () => {
     expect(runtimeServer).not.toMatch(/^\s*import\s+.*from\s+["']@anvil\//m);
     expect(runtimeServer).toContain("upstreamTimeoutMs");
     expect(runtimeServer).toContain("webhooks.json");
+    // MPL-2.0 3.2(a): the minified runtime names its MPL component and where its source is.
+    expect(runtimeServer).toMatch(
+      /Includes @jmespath-community\/jmespath \S+, licensed under MPL-2\.0/,
+    );
+    expect(runtimeServer).toContain(
+      "https://github.com/jmespath-community/typescript-jmespath/releases/tag/v",
+    );
+    // The MIT/ISC/BSD packages minified in alongside it keep their notices too.
+    expect(runtimeServer).toContain("Third-party software bundled in this file:");
+    expect(runtimeServer).toMatch(/\* {3}zod \S+ \(MIT\)/);
+    expect(runtimeServer).toMatch(/\* {3}fast-uri \S+ \(BSD-3-Clause\)/);
     expect(Array.isArray(JSON.parse(files["runtime/webhooks.json"] as string))).toBe(true);
   });
 

@@ -11,6 +11,10 @@ anvil adopt "node ./my-server.js" --out adopted/       # stdio: a command line
 
 It connects, captures the advertised tools, and lowers each one to an AIR
 operation. It never calls a tool and never regenerates the provider's server.
+An HTTP endpoint must be the server's final URL: redirects are followed only
+when they keep the request method (307, 308) and stay on the same scheme, host
+and port (MCP SDK 1.32+), which keeps `--header` values from reaching a host
+you didn't name.
 
 ## Why this is worth doing
 

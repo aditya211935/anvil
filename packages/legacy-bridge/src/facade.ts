@@ -8,6 +8,7 @@ import {
   QueueBrokerTransportError,
   requestReplyWithTimeout,
 } from "./broker.js";
+import { isOwnLoopbackHostHeader } from "./loopback.js";
 import { assertWireBindingMatchesLegacyBinding } from "./wire-binding.js";
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024;
@@ -30,6 +31,11 @@ export interface LegacyBridgeFacadeOptions {
    *  case in `LegacyBridgePlan.conformance` ("telemetry") for why no body or
    *  header value is ever a field here. */
   onTelemetry?: (record: LegacyBridgeTelemetryRecord) => void;
+  /** The server listens on a loopback interface, so a request whose `Host`
+   *  is not a loopback name with the port it reached is refused (the
+   *  DNS-rebinding gate). `serveLegacyBridge` sets it from the address it
+   *  binds. */
+  loopbackOnly?: boolean;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -37,8 +43,35 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(text),
+    "x-content-type-options": "nosniff",
   });
   res.end(text);
+}
+
+/**
+ * Why a request is refused before routing, or `undefined` to serve it. The
+ * facade is unauthenticated by design, so these gates keep a web page in the
+ * operator's browser from driving it.
+ *
+ * A browser attaches `Origin` to every request whose method is not GET or
+ * HEAD — cross-site or same-origin, `no-cors` included, a form post, a
+ * DNS-rebinding page talking to its own origin, `null` when the page's origin
+ * is opaque or its referrer policy hides it — and to every cross-origin CORS
+ * request whatever its method (Fetch Standard, "append a request `Origin`
+ * header": https://fetch.spec.whatwg.org/#append-a-request-origin-header). The
+ * runtime's HTTP client and the generated SDKs never send one. So an `Origin`
+ * means a page sent this, which is how a `text/plain` "simple" POST — no CORS
+ * preflight — would otherwise reach the broker. A rebinding page's GET carries
+ * no `Origin`, but it does carry its own domain as `Host`.
+ */
+function browserRefusal(req: IncomingMessage, loopbackOnly: boolean): string | undefined {
+  if (loopbackOnly && !isOwnLoopbackHostHeader(req.headers.host, req.socket.localPort)) {
+    return "The Host header must name a loopback address with the bridge's own port.";
+  }
+  if (req.headers.origin !== undefined) {
+    return "Requests from a web page (any Origin header) are refused; the bridge serves the runtime.";
+  }
+  return undefined;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -83,13 +116,33 @@ export function createLegacyBridgeFacade(options: LegacyBridgeFacadeOptions): Re
   // reviewed binding it claims to execute (deliverable 1's coherence rule).
   assertWireBindingMatchesLegacyBinding(options.wireBinding, options.binding);
   const { binding, wireBinding, client, onTelemetry } = options;
+  const loopbackOnly = options.loopbackOnly === true;
 
   return (req, res) => {
-    void handle(req, res);
+    // Whatever `handle` fails to catch (a throwing `onTelemetry`, say) is
+    // answered — 500, or the socket closed once a response has started — and
+    // never left as an unhandled rejection to end the process.
+    handle(req, res).catch(() => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      sendJson(res, 500, { code: "internal_error", message: "The bridge failed this request." });
+    });
   };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const refusal = browserRefusal(req, loopbackOnly);
+    if (refusal !== undefined) {
+      sendJson(res, 403, { code: "permission_denied", message: refusal });
+      return;
+    }
+    // Node's parser admits targets the URL parser refuses (`GET //`, `GET http://[`).
+    const url = URL.parse(req.url ?? "/", "http://localhost");
+    if (!url) {
+      sendJson(res, 400, { code: "bad_request", message: "Malformed request target." });
+      return;
+    }
     if (url.pathname === "/readyz") {
       // No live discovery in this deployment-local process — see docs. Ready
       // means "constructed with a coherent binding and a broker client,"
@@ -156,6 +209,7 @@ export function createLegacyBridgeFacade(options: LegacyBridgeFacadeOptions): Re
       res.writeHead(200, {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(text, "utf8"),
+        "x-content-type-options": "nosniff",
       });
       res.end(text);
     } catch (err) {

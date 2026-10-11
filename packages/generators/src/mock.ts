@@ -413,6 +413,10 @@ let tokenExchanges = [];
 let scenarioOverride = process.env.ANVIL_MOCK_SCENARIO ?? null;
 let faults = new Map(); // operationId -> { status, times }
 
+// Loopback unless ANVIL_MOCK_HOST names another address: anyone who reaches the
+// mock can read its captures and steer its scenarios and faults.
+const MOCK_HOST = process.env.ANVIL_MOCK_HOST || "127.0.0.1";
+
 /**
  * Match one template segment against a concrete (percent-decoded) segment.
  * A {param} may be embedded inside a segment with literal prefix/suffix
@@ -541,7 +545,7 @@ function scenarioFor(route) {
 }
 
 function json(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", "x-content-type-options": "nosniff" });
   res.end(JSON.stringify(body));
 }
 
@@ -608,7 +612,14 @@ function control(req, res, url, rawBody) {
     if (!routes.some((r) => r.operationId === parsed.opId)) {
       return json(res, 400, { error: { code: "unknown_operation", opId: parsed.opId } });
     }
-    faults.set(parsed.opId, { status: parsed.status ?? 503, times: parsed.times ?? 1 });
+    const status = parsed.status ?? 503;
+    // json() throws on a status Node cannot write, in the next matched request: refuse it here.
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      return json(res, 400, {
+        error: { code: "bad_control_request", message: "status must be an HTTP status from 100 to 599." },
+      });
+    }
+    faults.set(parsed.opId, { status, times: parsed.times ?? 1 });
     return json(res, 200, { ok: true, opId: parsed.opId });
   }
   return json(res, 404, { error: { code: "unknown_control_endpoint", path: url.pathname } });
@@ -618,7 +629,14 @@ createServer((req, res) => {
   const chunks = [];
   req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
-    const url = new URL(req.url ?? "/", "http://mock.local");
+    // Node's parser admits targets the URL parser refuses (\`GET //\`); thrown
+    // here, in an event handler, that would end the mock.
+    let url;
+    try {
+      url = new URL(req.url ?? "/", "http://mock.local");
+    } catch {
+      return json(res, 400, { error: { code: "bad_request", message: "Malformed request target." } });
+    }
     const rawBody = Buffer.concat(chunks).toString("utf8");
     if (url.pathname.startsWith("/__anvil/")) {
       try {
@@ -713,7 +731,7 @@ createServer((req, res) => {
     record.response = { status: pick?.status ?? 200, kind: "scenario", scenario: pick?.name };
     return json(res, pick?.status ?? 200, pick?.body ?? {});
   });
-}).listen(Number(process.env.PORT ?? 8081), function () {
+}).listen(Number(process.env.PORT ?? 8081), MOCK_HOST, function () {
   // Machine-readable ready line so a runner can use PORT=0 ephemeral ports.
   console.error(JSON.stringify({ event: "listening", port: this.address().port }));
 });

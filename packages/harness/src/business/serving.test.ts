@@ -102,6 +102,10 @@ it("serves HTTP and MCP through the prebuilt private runtime, including approval
     expect(
       await post("complete_return", { order_ref: "order-1", refund_amount: 4200 }, "return"),
     ).toEqual(first);
+    // Even a refusal from the business route carries nosniff, like the server's other JSON.
+    const refused = await fetch(`${base}/business/complete_return`);
+    expect(refused.status).toBe(405);
+    expect(refused.headers.get("x-content-type-options")).toBe("nosniff");
     client = new Client({ name: "owned-business-test", version: "1" });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`)));
     const tools = await client.listTools();

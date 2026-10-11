@@ -4,7 +4,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, relative, resolve, sep } from "node:path";
 import type { z } from "zod";
 import { CONSOLE_ROUTES, type ConsoleRoute } from "../contract.js";
-import { ConsoleError, forbidden, invalidRequest, notFound, toConsoleError } from "./errors.js";
+import {
+  ConsoleError,
+  forbidden,
+  hostNotAllowed,
+  invalidRequest,
+  notFound,
+  toConsoleError,
+} from "./errors.js";
 
 /**
  * The HTTP layer: the security gate the contract's SECURITY block specifies,
@@ -13,8 +20,10 @@ import { ConsoleError, forbidden, invalidRequest, notFound, toConsoleError } fro
  * JSON bodies with a size cap, and static serving of the built UI with the
  * per-process token injected into the page.
  *
- * Order of checks on a non-GET request — each one closes before the next
- * opens, and the body is not read until all have passed:
+ * Every request, GET included, first has its Host header checked against the
+ * server's own address (the DNS-rebinding gate, below). Then, on a non-GET —
+ * each check closes before the next opens, and the body is not read until all
+ * have passed:
  *   token → origin → Sec-Fetch-Site → route → content-type → size → JSON → schema.
  */
 
@@ -23,6 +32,17 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const UNREAD_REFUSAL_GRACE_MS = 250;
 const TOKEN_HEADER = "x-anvil-console-token";
 const TOKEN_META = "anvil-console-token";
+/**
+ * No other page may frame the console. The page carries the token and its
+ * buttons approve things, so a copy framed under a decoy (clickjacking) turns
+ * the reviewer's own clicks into approvals — clicks the framed page makes
+ * same-origin, which neither the Origin nor the Sec-Fetch-Site check can see.
+ * JSON responses carry it too: it costs nothing and keeps one rule.
+ */
+const NO_FRAMING = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-frame-options": "DENY",
+} as const;
 
 export type Handlers = {
   [R in ConsoleRoute]: (input: {
@@ -93,6 +113,18 @@ function tokenMatches(expected: string, given: string | string[] | undefined): b
 function header(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name];
   return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * The DNS-rebinding gate. A page on `attacker.example` re-pointed at 127.0.0.1
+ * reaches this socket as its own origin, so a GET needs no token and carries
+ * no foreign Origin — yet it still sends `Host: attacker.example`. Only this
+ * server's own address, by IP or as `localhost`, with its own port, is served.
+ */
+function assertHostAllowed(req: IncomingMessage, opts: ListenerOptions): void {
+  const { host, hostname } = new URL(opts.origin());
+  const given = header(req, "host")?.toLowerCase();
+  if (given !== host && given !== host.replace(hostname, "localhost")) throw hostNotAllowed();
 }
 
 /** The mutation-protection gate: throws `console/forbidden` on the first failed check. */
@@ -175,6 +207,7 @@ function sendJson(res: ServerResponse, status: number, value: unknown): void {
     "content-length": Buffer.byteLength(body),
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
+    ...NO_FRAMING,
   });
   res.end(body);
 }
@@ -190,6 +223,8 @@ function sendUnreadRefusal(req: IncomingMessage, res: ServerResponse, error: Con
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(body),
     "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    ...NO_FRAMING,
     connection: "close",
   });
   res.end(body, () => {
@@ -257,6 +292,7 @@ function serveStatic(pathname: string, res: ServerResponse, opts: ListenerOption
         "content-type": "text/html; charset=utf-8",
         "content-length": Buffer.byteLength(page),
         "cache-control": "no-store",
+        ...NO_FRAMING,
       });
       res.end(page);
       return;
@@ -272,6 +308,7 @@ function serveStatic(pathname: string, res: ServerResponse, opts: ListenerOption
     "content-type": type,
     "content-length": body.length,
     "cache-control": "no-store",
+    ...NO_FRAMING,
   });
   res.end(body);
 }
@@ -318,14 +355,18 @@ export function createRequestListener(
   return (req, res) => {
     const started = Date.now();
     const method = req.method ?? "GET";
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    // Node's parser admits targets the URL parser refuses (`GET //`, `GET http://[`):
+    // `null` here, never a throw, and refused inside run() behind the Host gate.
+    const url = URL.parse(req.url ?? "/", "http://127.0.0.1");
     res.on("finish", () => {
-      opts.log(`${method} ${url.pathname} ${res.statusCode} ${Date.now() - started}ms`);
+      opts.log(`${method} ${url?.pathname ?? "-"} ${res.statusCode} ${Date.now() - started}ms`);
     });
     // A GET carries no body to consume; a non-GET's body counts as consumed
     // only once `readJsonBody` has read it to its end.
     const body: BodyState = { consumed: method === "GET" };
     const run = async (): Promise<void> => {
+      assertHostAllowed(req, opts);
+      if (!url) throw new ConsoleError("console/invalid_request", 400, "Malformed request target.");
       if (method !== "GET") {
         assertMutationAllowed(req, opts);
         await dispatchApi(req, res, url, opts, body);

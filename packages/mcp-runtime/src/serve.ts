@@ -27,7 +27,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAirDocument, resolveAsyncContract } from "@anvil/air";
@@ -53,6 +53,8 @@ import {
   verifiedPrincipalFingerprint,
   verifyInboundToken,
 } from "./inbound-auth.js";
+import { refuseRebindingRequest, warnWhenOpenWithoutAuth } from "./loopback-guard.js";
+import { createGuardedServer, MALFORMED_TARGET, parseRequestTarget } from "./request-guard.js";
 import { buildMcpServer } from "./server.js";
 
 const runtimeRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -342,6 +344,8 @@ type Authorized =
       callerFingerprint: string;
     };
 
+const JSON_REFUSAL = { "content-type": "application/json", "x-content-type-options": "nosniff" };
+
 // Verify the inbound bearer and, on success, distill the validated caller into an
 // InboundIdentity so an on-behalf-of upstream call can exchange it (RFC 8693). On
 // failure the 401/403 is written here and { ok:false } signals the caller to stop.
@@ -349,20 +353,14 @@ async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Au
   const header = req.headers.authorization;
   const result = await verifyInboundToken(header, inboundAuth);
   if (!result.ok) {
-    res.writeHead(result.status, {
-      "content-type": "application/json",
-      "www-authenticate": result.wwwAuthenticate,
-    });
+    res.writeHead(result.status, { ...JSON_REFUSAL, "www-authenticate": result.wwwAuthenticate });
     res.end(JSON.stringify({ error: { code: result.error, message: result.description } }));
     return { ok: false };
   }
   const rawToken =
     typeof header === "string" ? header.replace(/^Bearer\s+/i, "").trim() : undefined;
   if (inboundAuth.mode !== "none" && !rawToken) {
-    res.writeHead(401, {
-      "content-type": "application/json",
-      "www-authenticate": 'Bearer error="invalid_token"',
-    });
+    res.writeHead(401, { ...JSON_REFUSAL, "www-authenticate": 'Bearer error="invalid_token"' });
     res.end(
       JSON.stringify({
         error: { code: "invalid_token", message: "Verified bearer token is unavailable." },
@@ -373,10 +371,7 @@ async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Au
   const callerFingerprint =
     inboundAuth.mode === "none" ? "anonymous" : verifiedPrincipalFingerprint(result.claims);
   if (!callerFingerprint) {
-    res.writeHead(401, {
-      "content-type": "application/json",
-      "www-authenticate": 'Bearer error="invalid_token"',
-    });
+    res.writeHead(401, { ...JSON_REFUSAL, "www-authenticate": 'Bearer error="invalid_token"' });
     res.end(
       JSON.stringify({
         error: {
@@ -499,8 +494,11 @@ function releaseSessionReservation(): void {
 const sessionSweep = setInterval(() => pruneIdleSessions(), MCP_SESSION_SWEEP_MS);
 sessionSweep.unref();
 
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", "http://localhost");
+const server = createGuardedServer(async (req, res) => {
+  // No token to check: a loopback caller must name this server, every route (loopback-guard.ts).
+  if (inboundAuth.mode === "none" && refuseRebindingRequest(req, res)) return;
+  const url = parseRequestTarget(req);
+  if (!url) return json(res, 400, MALFORMED_TARGET);
   // Health/readiness are always open — probes have no token.
   if (url.pathname === "/healthz")
     return json(res, 200, {
@@ -756,6 +754,7 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     "content-type": "application/json",
     "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
   });
   res.end(JSON.stringify(body));
 }
@@ -789,6 +788,7 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 const port = process.env.PORT ? Number(process.env.PORT) : 8080;
+warnWhenOpenWithoutAuth(server, inboundAuth.mode);
 server.listen(port, () =>
   console.error(
     air.service.id,

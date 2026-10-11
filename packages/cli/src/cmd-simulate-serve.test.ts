@@ -90,6 +90,32 @@ describe("anvil simulate serve", () => {
     expect(io.text()).toMatch(/State provider exited \(exit code 7\)/);
   });
 
+  it("warns once on stderr when --host is not a loopback address, and only then", async () => {
+    const io = bufferIO();
+    // TEST-NET-1 (RFC 5737): no interface carries it, so the bind fails after
+    // the warning and the test never exposes a server beyond this machine.
+    const started = await startSimulateServe(
+      { contract: join(dir, "bundle"), host: "192.0.2.1" },
+      io,
+    );
+    if (started.ok) await started.close();
+    const warnings = io.stderr.filter((line) => line.startsWith("warning:"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("--host 192.0.2.1 is not a loopback address");
+    expect(warnings[0]).toContain("names no principal as 'admin'");
+
+    for (const host of ["127.0.0.1", "localhost"]) {
+      const quiet = bufferIO();
+      const loopback = await startSimulateServe({ contract: join(dir, "bundle"), host }, quiet);
+      if (!loopback.ok) throw new Error(quiet.text());
+      await loopback.close();
+      expect(
+        quiet.stderr.filter((line) => line.startsWith("warning:")),
+        host,
+      ).toEqual([]);
+    }
+  });
+
   it("is reachable as a subcommand without disturbing `anvil simulate <dir>`", async () => {
     const io = bufferIO();
     const code = await runAnvilCli(["simulate", "serve", "--contract", join(dir, "nope")], { io });

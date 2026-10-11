@@ -2,7 +2,8 @@ import type { RuntimeEnvVar } from "@anvil/runtime";
 
 /**
  * The variables the serving path itself reads, beyond `@anvil/runtime`'s
- * contract: the listener port, the inbound OAuth resource-server family
+ * contract: the listener port, what the rebinding gate and the open-listener
+ * warning read (`loopback-guard.ts`), the inbound OAuth resource-server family
  * (`inbound-auth.ts`), and the business-gateway serving inputs
  * (`business-serving.ts`). Declared beside the code that reads them so the
  * generated `deploy/env.schema.json` is derived, not transcribed — see the
@@ -14,6 +15,21 @@ export const SERVING_ENV_CONTRACT: readonly RuntimeEnvVar[] = [
     description: "HTTP listener port for runtime/server.js. Cloud Run sets it; defaults to 8080.",
     default: "8080",
     pattern: "^[1-9][0-9]*$",
+  },
+  {
+    name: "K_SERVICE",
+    description:
+      "Set by Cloud Run and Knative, never by an operator. With inbound auth off, its presence suppresses the startup warning that the server listens on every interface and turns off the DNS-rebinding checks on Host and Origin, because the platform's queue-proxy delivers every request to 127.0.0.1 with the public Host.",
+  },
+  {
+    name: "KUBERNETES_SERVICE_HOST",
+    description:
+      "Set by Kubernetes in every pod, never by an operator. Like K_SERVICE, its presence suppresses the startup warning for inbound auth off on every interface.",
+  },
+  {
+    name: "ANVIL_INBOUND_ALLOWED_HOSTS",
+    description:
+      "With inbound auth off only: comma-separated host names (host or host:port, matched exactly against the Host header, case-insensitive) the server also answers as on any connection, typically for a reverse proxy (on this machine or in front of a container) that keeps the public Host. Such a request is served when its Origin, if any, is http:// or https:// that same host. Not ANVIL_ALLOWED_HOSTS, which pins upstream egress. Unset, a loopback connection must name a loopback address.",
   },
   {
     name: "ANVIL_INBOUND_AUTH_MODE",

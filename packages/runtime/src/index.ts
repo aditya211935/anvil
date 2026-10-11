@@ -24,6 +24,7 @@ export * from "./inbound-identity.js";
 export * from "./job-answer.js";
 export * from "./job-index.js";
 export * from "./limits.js";
+export * from "./oauth-endpoint.js";
 export * from "./observability.js";
 export * from "./policy.js";
 export * from "./response-bytes.js";

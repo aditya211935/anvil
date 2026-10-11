@@ -6,7 +6,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
 import { loadAir } from "@anvil/refinement";
-import { credentialProfileName, credentialRequirement, envPrefix } from "@anvil/runtime";
+import {
+  credentialProfileName,
+  credentialRequirement,
+  envPrefix,
+  isSendableOAuthEndpoint,
+} from "@anvil/runtime";
 import type { Command } from "commander";
 import { emitRefusal } from "../envelope.js";
 import type { CliIO } from "../io.js";
@@ -179,16 +184,26 @@ function escapeHtml(s: string): string {
   );
 }
 
+/**
+ * The command that opens `url` in the default browser. On Windows it goes
+ * through rundll32 rather than `cmd /c start`: cmd parses `&` (every authorize
+ * URL has one) as a command separator, so the URL was cut short and a crafted
+ * authorization endpoint could run a command.
+ */
+export function browserOpenCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): [string, string[]] {
+  if (platform === "darwin") return ["open", [url]];
+  if (platform === "win32") return ["rundll32", ["url.dll,FileProtocolHandler", url]];
+  return ["xdg-open", [url]];
+}
+
 /** Open the default browser through the platform's own opener; failure is a note, never an error. */
 function openBrowser(url: string, io: CliIO): void {
-  const [command, args] =
-    process.platform === "darwin"
-      ? ["open", [url]]
-      : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
-        : ["xdg-open", [url]];
+  const [command, args] = browserOpenCommand(url);
   try {
-    const child = spawn(command as string, args as string[], { detached: true, stdio: "ignore" });
+    const child = spawn(command, args, { detached: true, stdio: "ignore" });
     child.on("error", () =>
       io.err(`  (could not open a browser with ${command}; open the URL yourself)`),
     );
@@ -216,7 +231,15 @@ function awaitRedirect(
       resolve(result);
     };
     const server = createServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      let url: URL;
+      try {
+        url = new URL(req.url ?? "/", "http://127.0.0.1");
+      } catch {
+        // A target such as `//` is no URL at all; answering it must not end the login.
+        res.writeHead(400);
+        res.end();
+        return;
+      }
       if (url.pathname !== path) {
         res.writeHead(404);
         res.end();
@@ -247,6 +270,29 @@ function awaitRedirect(
   });
 }
 
+/**
+ * Both provider endpoints get the rule every other OAuth caller in
+ * `@anvil/runtime` applies (`isSendableOAuthEndpoint`, oauth-endpoint.ts):
+ * HTTPS, or plain HTTP to the exact IPv4 loopback literal for a local
+ * development IdP. The token endpoint is sent the authorization code, the PKCE
+ * verifier and possibly the client secret; the authorization endpoint is the
+ * page this command prints and `--open`s for a person to sign in on. Returns
+ * why an endpoint is refused, or `undefined` when it is acceptable.
+ */
+function endpointRefusal(field: string, raw: string, refusing: string): string | undefined {
+  if (isSendableOAuthEndpoint(raw)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return `provider.${field} is not a valid URL.`;
+  }
+  return `provider.${field} must use https (plain http only for 127.0.0.1); refusing to ${refusing} ${url.protocol}//${url.host}.`;
+}
+
+const tokenEndpointRefusal = (raw: string): string | undefined =>
+  endpointRefusal("token_endpoint", raw, "send the authorization code and client credentials to");
+
 async function exchangeCode(
   tokenEndpoint: string,
   fields: Record<string, string>,
@@ -271,7 +317,23 @@ async function exchangeCode(
   } else {
     body.set("client_id", clientId);
   }
-  const res = await fetch(tokenEndpoint, { method: "POST", headers, body: body.toString() });
+  let res: Response;
+  try {
+    // A redirect is never followed: it would carry the code and the client
+    // credentials to a URL nobody checked.
+    res = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers,
+      body: body.toString(),
+      redirect: "error",
+    });
+  } catch {
+    return {
+      error: "token_endpoint_unreachable",
+      error_description:
+        "the token endpoint could not be reached or answered with a redirect, which is not followed",
+    };
+  }
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     return {
@@ -308,6 +370,20 @@ export async function runAuthLogin(
     io.err(
       `Operation "${op.id}" is missing provider.authorization_endpoint/token_endpoint. Declare both in the manifest before running the broker (see docs/MANIFEST.md).`,
     );
+    return 1;
+  }
+  const refusal = tokenEndpointRefusal(provider.tokenEndpoint);
+  if (refusal) {
+    io.err(refusal);
+    return 1;
+  }
+  const signInRefusal = endpointRefusal(
+    "authorization_endpoint",
+    provider.authorizationEndpoint,
+    "open the sign-in page at",
+  );
+  if (signInRefusal) {
+    io.err(signInRefusal);
     return 1;
   }
 

@@ -69,6 +69,13 @@ Source capture does not fetch remote content. Vendor the referenced contract
 under the import root or produce a fully resolved source upstream, then capture
 again. This is required for reproducibility.
 
+### `adopt` says the MCP endpoint answered with a redirect
+
+An HTTP endpoint must be the server's final URL. Redirects are followed only
+when they keep the request method (307, 308) and stay on the same scheme, host
+and port (MCP SDK 1.32+), which keeps `--header` values from reaching a host
+you didn't name. Pass the URL the redirect points to as the endpoint.
+
 ### The wrong service or operation name was generated
 
 Use stable source operation ids where possible. Repair agent-facing routing in
@@ -163,6 +170,63 @@ Inspect the full structured error. A common cause is host pinning: the generated
 request resolved to a host outside `ANVIL_ALLOWED_HOSTS`. Fix the reviewed
 upstream configuration; do not widen the allowlist without understanding the
 egress boundary.
+
+### `host_not_allowed` or `origin_not_allowed`
+
+With `ANVIL_INBOUND_AUTH_MODE` unset, `runtime/server.js` and
+`mcp/server-sse.js` have no token to check. A web page can reach them by
+pointing its own domain at this machine (DNS rebinding), at `127.0.0.1` or at
+its network address, so every route, `/healthz` and `/readyz` included, runs
+two checks first:
+
+- On every connection, a request that carries an `Origin` header is served
+  only when it names the server's own loopback origin: `http://` with
+  `127.0.0.1`, `localhost`, or `[::1]`, on the port the connection arrived on.
+  A browser adds `Origin` to every request that can call a tool. Neither server
+  sends CORS headers, so no page on another origin could use them anyway, and
+  MCP clients outside a browser send no `Origin`. A gateway or reverse proxy
+  that answers CORS itself and forwards the browser's `Origin` gets
+  `origin_not_allowed`: have it drop `Origin` after its own CORS check, or set
+  `ANVIL_INBOUND_AUTH_MODE`.
+- On a connection that arrives on a loopback address, `Host` must name a
+  loopback address (`127.0.0.1`, `localhost`, `[::1]`, any port). Connections
+  on any other address, such as those from a Kubernetes Service or
+  `docker run -p`, keep whatever `Host` they bring.
+
+Nothing is checked when `K_SERVICE` is set (Cloud Run, Knative: the
+queue-proxy delivers every request to `127.0.0.1` with the public `Host`).
+
+The usual cause of `host_not_allowed` is a forwarder that delivers its own host
+name to `localhost`: a tunnel such as ngrok or cloudflared, or a local reverse
+proxy that preserves `Host`. For a reverse proxy (on this machine or in front
+of a container), list its public name in `ANVIL_INBOUND_ALLOWED_HOSTS` (comma-separated, `host` or
+`host:port`, matched exactly and case-insensitively against `Host`). A request
+with that `Host` is served when its `Origin`, if any, is `http://` or
+`https://` that same host. Otherwise set `ANVIL_INBOUND_AUTH_MODE` so the
+bearer token is the gate; webhook routes keep verifying their own signatures.
+For a local-only setup, have the forwarder send the loopback `Host`.
+
+A port forward (`kubectl port-forward`, `ssh -L`) sends a loopback `Host`
+with its own local port. Only `runtime/server.js` and `mcp/server-sse.js`
+accept a port that differs from their own. The other unauthenticated listeners
+require the port in `Host` to be theirs, so forward to the same local port
+number (`kubectl port-forward 8788:8788`): the fleet
+(`anvil serve mcp <workspace> --fleet --http <port>`, which checks `Host` on
+every connection; see [fleet](fleet.md)), the stdio fleet's `/readyz`
+listener, the legacy protocol facade, and `anvil console`.
+
+What inbound auth off still leaves open: a browser sends no `Origin` on a
+same-origin GET, so a page whose request arrives off the loopback (rebound to
+this machine's network address, or to `127.0.0.1` in front of `docker run -p`)
+can still read the GET routes, such as `/openapi`, `/metrics`, and `/healthz`,
+and open `mcp/server-sse.js`'s `GET /sse` stream. None returns credentials or
+calls a tool (`POST /messages` carries `Origin` and is refused). Set
+`ANVIL_INBOUND_AUTH_MODE` to close that too.
+
+When inbound auth is unset and the server listens on every interface outside
+Cloud Run and Kubernetes, it prints one warning line on stderr at startup,
+because anything that can reach the port, not only this machine, can call its
+tools.
 
 ### An operation did not retry
 

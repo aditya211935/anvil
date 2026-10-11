@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -31,6 +31,7 @@ let gateway: FleetHttpHandle;
 let base: string;
 let mint: (grants: unknown[], extra?: Record<string, unknown>) => string;
 let auditFile: string;
+let gatewayIo: ReturnType<typeof bufferIO>;
 const ISSUER = "branchyard:local:rest";
 
 beforeAll(async () => {
@@ -85,11 +86,12 @@ beforeAll(async () => {
     ANVIL_AUDIT_FILE: auditFile,
     ANVIL_ALLOWED_HOSTS: "127.0.0.1",
   };
+  gatewayIo = bufferIO();
   const started = await startFleetHttp(workspace, {
     host: "127.0.0.1",
     port,
     env,
-    io: bufferIO(),
+    io: gatewayIo,
   });
   if (!started.ok) throw new Error(started.message);
   gateway = started.handle;
@@ -268,6 +270,50 @@ describe("POST /call/<tool>", () => {
       body: JSON.stringify({ arguments: repo }),
     });
     expect(anonymous.status).toBe(401);
+  });
+
+  it("answers a tool name with a bad percent escape 404, and keeps serving", async () => {
+    // `decodeURIComponent` throws URIError on these; uncaught, that rejection
+    // left the request unanswered and the process at the mercy of an unhandled rejection.
+    const token = mint(WRITE);
+    for (const tool of ["%", "%E0%A4%A", "github__%ZZ"]) {
+      const reply = await call(token, tool, { arguments: {} });
+      expect(reply.status, tool).toBe(404);
+      expect(reply.body, tool).toEqual({ error: { code: "not_found", message: "No such tool." } });
+    }
+    const listed = await call(token, "github__github_list_issue", { arguments: repo });
+    expect(listed.status).toBe(200);
+  });
+
+  it("answers a failure no route handler catches with 500, and keeps serving", async () => {
+    // The vault directory gone from under a running gateway: the vault's own
+    // read throws, nothing on the route catches it, and the listener's guard
+    // answers rather than leaving an unhandled rejection to end the process.
+    const vault = join(root, "vault");
+    const status = () =>
+      fetch(`${base}/connect/status`, {
+        signal: AbortSignal.timeout(5_000),
+        headers: {
+          authorization: `Bearer ${mint([], { by_branch: "", by_turn: "", by_purpose: "connect" })}`,
+        },
+      });
+    const logStart = gatewayIo.stderr.length;
+    renameSync(vault, `${vault}.moved`);
+    try {
+      const failed = await status();
+      expect(failed.status).toBe(500);
+      expect(failed.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(await failed.json()).toEqual({
+        error: { code: "internal_error", message: "The request could not be handled." },
+      });
+    } finally {
+      renameSync(`${vault}.moved`, vault);
+    }
+    // Logged once, with nothing of the error's own text (it names the vault path).
+    expect(gatewayIo.stderr.slice(logStart)).toEqual([
+      "anvil: a fleet request failed unexpectedly; answered 500.",
+    ]);
+    expect((await status()).status).toBe(200);
   });
 
   it("writes the effect class and ledger id on the audit line", () => {

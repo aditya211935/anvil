@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { type BusinessPlan, loadBusinessPlan } from "@anvil/air";
 import { compileBusiness } from "@anvil/compiler";
 import type { JsonValue } from "@anvil/fuzz";
+import { createGuardedServer } from "@anvil/mcp-runtime";
 import {
   type BusinessHost,
   BusinessTransport,
@@ -154,7 +154,9 @@ export const businessFuzzFixture: FuzzFixtureFactory = async (bundle, _seed, sig
   const backend = new OwnedBusinessBackend();
   const transport = plan ? new BusinessTransport(plan, ownedBusinessHost(backend)) : backend;
   const wire: JsonValue[] = [];
-  const server = createServer(async (request, response) => {
+  // Guarded: a malformed target, a non-JSON body or an aborted read is answered,
+  // never a rejection that ends the evaluator process this fixture runs in.
+  const server = createGuardedServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = Buffer.concat(chunks).toString();

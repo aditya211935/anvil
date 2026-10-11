@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { isIP } from "node:net";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import {
   branchyardPrincipal,
   branchyardSessionFingerprint,
+  createGuardedServer,
   type FleetServer,
   type InboundAuthConfig,
   type InboundClaims,
   isBranchyardConnectToken,
   loadInboundAuthConfig,
+  MALFORMED_TARGET,
+  parseRequestTarget,
   protectedResourceMetadata,
   verifiedPrincipalFingerprint,
   verifyInboundToken,
@@ -17,7 +19,13 @@ import { type Principal, resolvePrincipalForBearer, withInboundIdentity } from "
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { CliIO } from "../io.js";
-import { json, readSmallJson } from "./fleet-http-io.js";
+import {
+  isLoopbackHost,
+  isOwnLoopbackHost,
+  isOwnLoopbackOrigin,
+  json,
+  readSmallJson,
+} from "./fleet-http-io.js";
 import { auditSinkFromEnv, buildGatewayRuntime, type GatewayRuntime } from "./gateway.js";
 import { prepareFleetForWorkspace } from "./serve.js";
 import { handleRestCall } from "./serve-fleet-rest.js";
@@ -76,14 +84,7 @@ const SESSION_IDLE_TTL_MS = 15 * 60 * 1000;
 const SESSION_SWEEP_MS = 60 * 1000;
 const MAX_SESSIONS = 100;
 
-/** True for the loopback names/addresses a local fleet is meant to bind. */
-export function isLoopbackHost(host: string): boolean {
-  if (host === "localhost") return true;
-  const family = isIP(host);
-  if (family === 4) return host.startsWith("127.");
-  if (family === 6) return host === "::1" || host === "0:0:0:0:0:0:0:1";
-  return false;
-}
+const JSON_REFUSAL = { "content-type": "application/json", "x-content-type-options": "nosniff" };
 
 interface Session {
   fleet: FleetServer;
@@ -114,10 +115,7 @@ async function authorize(
   const header = req.headers.authorization;
   const result = await verifyInboundToken(header, inbound);
   if (!result.ok) {
-    res.writeHead(result.status, {
-      "content-type": "application/json",
-      "www-authenticate": result.wwwAuthenticate,
-    });
+    res.writeHead(result.status, { ...JSON_REFUSAL, "www-authenticate": result.wwwAuthenticate });
     res.end(JSON.stringify({ error: { code: result.error, message: result.description } }));
     return { ok: false };
   }
@@ -132,7 +130,7 @@ async function authorize(
     const claims = result.claims as InboundClaims;
     if (isBranchyardConnectToken(claims)) {
       // A connect token is for /connect/* only: it never lists or calls tools.
-      res.writeHead(403, { "content-type": "application/json" });
+      res.writeHead(403, JSON_REFUSAL);
       res.end(
         JSON.stringify({
           error: {
@@ -145,10 +143,7 @@ async function authorize(
     }
     const principal = branchyardPrincipal(claims);
     if (!principal) {
-      res.writeHead(401, {
-        "content-type": "application/json",
-        "www-authenticate": 'Bearer error="invalid_token"',
-      });
+      res.writeHead(401, { ...JSON_REFUSAL, "www-authenticate": 'Bearer error="invalid_token"' });
       res.end(
         JSON.stringify({
           error: { code: "invalid_token", message: "Token does not name a caller and a grant." },
@@ -166,10 +161,7 @@ async function authorize(
   }
   const callerFingerprint = bearer ? verifiedPrincipalFingerprint(result.claims) : undefined;
   if (!callerFingerprint || !bearer) {
-    res.writeHead(401, {
-      "content-type": "application/json",
-      "www-authenticate": 'Bearer error="invalid_token"',
-    });
+    res.writeHead(401, { ...JSON_REFUSAL, "www-authenticate": 'Bearer error="invalid_token"' });
     res.end(
       JSON.stringify({
         error: {
@@ -351,8 +343,44 @@ export async function startFleetHttp(
           ? resolvePrincipalForBearer(config.principals, auth.bearer)
           : undefined;
 
-  const server: Server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+  // Whatever a request handler fails to catch is answered (500, or the socket
+  // closed once a response has started) and logged; it never ends the process.
+  const reportFailure = () => log("anvil: a fleet request failed unexpectedly; answered 500.");
+  const server: Server = createGuardedServer(async (req, res) => {
+    // With no inbound auth the loopback bind is the only gate, and DNS rebinding
+    // walks around it: a web page can re-point its own domain at 127.0.0.1 and
+    // POST same-origin. So an unauthenticated listener answers only requests
+    // addressed to its own loopback address; a bearer token already stops this
+    // when inbound auth is configured.
+    if (inbound.mode === "none" && !isOwnLoopbackHost(req.headers.host, req.socket.localPort)) {
+      req.resume();
+      return json(res, 403, {
+        error: {
+          code: "host_not_allowed",
+          message:
+            "Without inbound auth this listener answers only requests addressed to its own loopback address and port.",
+        },
+      });
+    }
+    // The Streamable HTTP transport spec: a present, invalid Origin is a 403. A
+    // browser names the page's origin; MCP clients outside a browser send none.
+    const origin = req.headers.origin;
+    if (
+      inbound.mode === "none" &&
+      origin !== undefined &&
+      !isOwnLoopbackOrigin(origin, req.socket.localPort)
+    ) {
+      req.resume();
+      return json(res, 403, {
+        error: {
+          code: "origin_not_allowed",
+          message: "Without inbound auth this listener answers only its own loopback origin.",
+        },
+      });
+    }
+    // Node's parser admits targets the URL parser refuses (`GET //`): a 400, not a crash.
+    const url = parseRequestTarget(req);
+    if (!url) return json(res, 400, MALFORMED_TARGET);
     if (url.pathname === "/healthz") {
       return json(res, 200, { status: "ok", fleet: true, bundles: bundleIds.length });
     }
@@ -486,7 +514,7 @@ export async function startFleetHttp(
       current.lastUsedAt = Date.now();
       if (current.sessionId === undefined) await closeSession(current);
     }
-  });
+  }, reportFailure);
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -567,7 +595,7 @@ async function handleConnect(
   const verified = await verifyInboundToken(req.headers.authorization, inbound);
   if (!verified.ok) {
     res.writeHead(verified.status, {
-      "content-type": "application/json",
+      ...JSON_REFUSAL,
       "www-authenticate": verified.wwwAuthenticate,
     });
     res.end(JSON.stringify({ error: { code: verified.error, message: verified.description } }));

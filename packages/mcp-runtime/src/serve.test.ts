@@ -41,7 +41,7 @@ describe("one runtime, no template", () => {
   it("fails closed on a missing artifact file instead of serving without it", () => {
     expect(source).toContain("refusing to serve a partial deployment");
     // The refusal happens at module load, before the server is created.
-    ordered("refusing to serve a partial deployment", "const server = createServer(");
+    ordered("refusing to serve a partial deployment", "const server = createGuardedServer(");
   });
 
   it("boots every dependency through the one composition root, before it can listen", () => {
@@ -56,7 +56,7 @@ describe("one runtime, no template", () => {
     expect(source).not.toContain("new FetchTransport(");
     ordered(
       "const boot = await bootRuntime(",
-      "const server = createServer(",
+      "const server = createGuardedServer(",
       "server.listen(port",
     );
     // What booted is observable: /healthz names the exporter and every extension.
@@ -122,6 +122,39 @@ describe("public StreamableHTTP server hardening", () => {
       'mediaType !== "application/json"',
       "const parsed = await readJsonBody(req, res)",
       "live.transport.handleRequest(req, res, body)",
+    );
+  });
+
+  it("answers the DNS-rebinding gate before every route when inbound auth is off", () => {
+    // Health and readiness included: a rebound page gets nothing from a loopback
+    // listener with no token to check. The boot tests in @anvil/harness prove the
+    // behaviour on the BUILT server; this pins the order in the source it is built from.
+    expect(source).toContain('from "./loopback-guard.js"');
+    ordered(
+      "const server = createGuardedServer(async (req, res) => {",
+      'if (inboundAuth.mode === "none" && refuseRebindingRequest(req, res)) return;',
+      "const url = parseRequestTarget(req);",
+      'if (url.pathname === "/healthz")',
+    );
+    ordered("warnWhenOpenWithoutAuth(server, inboundAuth.mode);", "server.listen(port");
+  });
+
+  it("answers a malformed request target 400 and any listener failure, never crashing", () => {
+    // Node's parser admits targets `new URL` throws on (`GET //`, `GET http://[`).
+    // Thrown inside the async listener that was an unhandled rejection, and the
+    // process exited — ahead of authorized() on every gated route. The guard's
+    // own behaviour is unit-tested in request-guard.test.ts and booted for real
+    // in @anvil/harness served-malformed-target; this pins the wiring in the
+    // source the bundle is built from.
+    expect(source).toContain('from "./request-guard.js"');
+    expect(source).not.toContain("createServer(async");
+    expect(source).not.toMatch(/new URL\(req\.url/);
+    ordered(
+      "const server = createGuardedServer(async (req, res) => {",
+      "const url = parseRequestTarget(req);",
+      "if (!url) return json(res, 400, MALFORMED_TARGET);",
+      'if (url.pathname === "/healthz")',
+      "const auth = await authorized(req, res)",
     );
   });
 
