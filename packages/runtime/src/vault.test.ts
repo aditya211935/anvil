@@ -12,7 +12,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AirDocument, AuthRequirement, loadAirDocument } from "@anvil/air";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectFlow, connectorAuthProfile } from "./connect.js";
 import {
   ConnectionVault,
@@ -95,6 +95,46 @@ async function mockAuthServer(): Promise<MockAuthServer> {
   cleanups.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
   return state;
 }
+
+/** Listen on loopback, closed after the test; the server's base URL. */
+async function listenLoopback(server: Server): Promise<string> {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanups.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  return `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+}
+
+/**
+ * A loopback token endpoint that answers every request with a 307 to a sink,
+ * which records whatever reaches it and would hand back a token for it.
+ */
+async function redirectingTokenEndpoint(): Promise<{ url: string; sinkBodies: string[] }> {
+  const sinkBodies: string[] = [];
+  const sink = await listenLoopback(
+    createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        sinkBodies.push(body);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "stolen", expires_in: 3600 }));
+      });
+    }),
+  );
+  const idp = await listenLoopback(
+    createServer((req, res) => {
+      req.resume();
+      res.writeHead(307, { location: `${sink}/token` });
+      res.end();
+    }),
+  );
+  return { url: `${idp}/token`, sinkBodies };
+}
+
+/** A fetchImpl answering every token request with a fresh access token. */
+const okToken = async (_url?: string | URL | Request, _init?: RequestInit) =>
+  new Response(JSON.stringify({ access_token: "access-2", expires_in: 3600 }), { status: 200 });
 
 describe("ConnectionVault", () => {
   it("round-trips a connection and keeps no secret in plaintext on disk", () => {
@@ -308,6 +348,89 @@ describe("VaultCredentialResolver", () => {
     });
     expect(vault.get("local:ada", "github", "default")?.status).toBe("active");
   });
+
+  // The refresh grant carries the refresh token and client secret, so it goes
+  // over HTTPS only (plain HTTP to the exact 127.0.0.1 literal), and a refused
+  // endpoint is the gateway's configuration: nothing is sent and nothing marked.
+  /** An expiring connection refreshed against `tokenEndpoint`; platform fetch unless one is given. */
+  const refreshVia = (tokenEndpoint: string, fetchImpl?: typeof okToken) => {
+    const vault = new ConnectionVault(tmp(), KEY);
+    vault.put(connection({ expiresAt: 0 }));
+    const resolver = new VaultCredentialResolver(
+      vault,
+      () => ({
+        tokenEndpoint,
+        clientId: "client-1",
+        clientSecret: "shh",
+        clientAuth: "client_secret_post",
+      }),
+      fetchImpl ? { fetchImpl: fetchImpl as unknown as typeof fetch } : {},
+    );
+    return { vault, refreshed: resolver.resolve("p", bearer, call) };
+  };
+
+  it.each([
+    "http://idp.example.com/token",
+    "http://localhost:8123/token",
+    "not a url",
+  ])("refuses to send the refresh grant to %s, without marking the connection", async (endpoint) => {
+    const fetchImpl = vi.fn(okToken);
+    const { vault, refreshed } = refreshVia(endpoint, fetchImpl);
+    await expect(refreshed).rejects.toMatchObject({
+      details: { code: "connector/refresh_failed", connector: "github" },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(vault.get("local:ada", "github", "default")?.status).toBe("active");
+  });
+
+  it("refuses the refresh when the gateway's token endpoint override is plain HTTP", async () => {
+    const profile = connectorAuthProfile(
+      "github",
+      oauthAir("https://idp.example.com/authorize", "https://idp.example.com/token"),
+      {
+        ANVIL_CONNECT_GITHUB_CLIENT_ID: "client-1",
+        ANVIL_CONNECT_GITHUB_CLIENT_SECRET: "shh",
+        ANVIL_CONNECT_GITHUB_TOKEN_ENDPOINT: "http://idp.example.com/token",
+      },
+    );
+    const vault = new ConnectionVault(tmp(), KEY);
+    vault.put(connection({ expiresAt: 0 }));
+    const fetchImpl = vi.fn(okToken);
+    // Wired as the gateway wires it (packages/cli/src/commands/gateway.ts).
+    const resolver = new VaultCredentialResolver(vault, () => profile.client, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await expect(resolver.resolve("p", bearer, call)).rejects.toMatchObject({
+      details: { code: "connector/refresh_failed" },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(vault.get("local:ada", "github", "default")?.status).toBe("active");
+  });
+
+  it.each([
+    "https://idp.example.com/token",
+    "http://127.0.0.1:8123/token",
+  ])("sends the refresh grant to %s with redirect: error", async (endpoint) => {
+    const fetchImpl = vi.fn(okToken);
+    const { refreshed } = refreshVia(endpoint, fetchImpl);
+    expect(await refreshed).toEqual({ headers: { Authorization: "Bearer access-2" } });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(endpoint);
+    expect(fetchImpl.mock.calls[0]?.[1]?.redirect).toBe("error");
+  });
+
+  it("does not follow a real 307 from the token endpoint: the redirect target never sees the grant", async () => {
+    const idp = await redirectingTokenEndpoint();
+    const { vault, refreshed } = refreshVia(idp.url);
+    await expect(refreshed).rejects.toMatchObject({
+      details: { code: "connector/refresh_failed" },
+    });
+    expect(idp.sinkBodies).toEqual([]);
+    expect(vault.get("local:ada", "github", "default")).toMatchObject({
+      accessToken: "access-1",
+      status: "active",
+    });
+  });
 });
 
 function oauthAir(authorizationEndpoint: string, tokenEndpoint: string): AirDocument {
@@ -479,6 +602,157 @@ describe("the connect flow", () => {
       accessToken: "gho_3",
       refreshToken: "ghr_3",
     });
+  });
+
+  // The exchange carries the client secret, the code, and the PKCE verifier;
+  // the authorization endpoint is where the person signs in. Both endpoints
+  // face one rule (oauth-endpoint.ts), checked when the profile is resolved.
+  const https = ["https://idp.example.com/authorize", "https://idp.example.com/token"] as const;
+  it.each([
+    { source: "AIR's token endpoint", air: [https[0], "http://idp.example.com/token"], env: {} },
+    {
+      source: "the token endpoint override",
+      air: https,
+      env: { ANVIL_CONNECT_GITHUB_TOKEN_ENDPOINT: "http://idp.example.com/token" },
+    },
+    {
+      source: "an unparseable token endpoint override",
+      air: https,
+      env: { ANVIL_CONNECT_GITHUB_TOKEN_ENDPOINT: "not a url" },
+    },
+    {
+      source: "AIR's authorization endpoint",
+      air: ["http://idp.example.com/authorize", https[1]],
+      env: {},
+      names: "AUTHORIZATION_ENDPOINT",
+    },
+    {
+      source: "the authorization endpoint override",
+      air: https,
+      env: { ANVIL_CONNECT_GITHUB_AUTHORIZATION_ENDPOINT: "http://idp.example.com/authorize" },
+      names: "AUTHORIZATION_ENDPOINT",
+    },
+  ])("refuses to start a flow when $source may not carry a grant", ({
+    air,
+    env,
+    names = "TOKEN_ENDPOINT",
+  }) => {
+    const profile = connectorAuthProfile("github", oauthAir(air[0], air[1]), {
+      ANVIL_CONNECT_GITHUB_CLIENT_ID: "client-1",
+      ANVIL_CONNECT_GITHUB_CLIENT_SECRET: "shh",
+      ...env,
+    });
+    expect(profile.problem).toContain(`(set ANVIL_CONNECT_GITHUB_${names})`);
+    const connect = new ConnectFlow({
+      vault: new ConnectionVault(tmp(), KEY),
+      profiles: new Map([["github", profile]]),
+      redirectUri: "http://127.0.0.1:8788/connect/callback",
+    });
+    expect(connect.start({ sub: "local:ada", connector: "github" })).toEqual({
+      ok: false,
+      status: 503,
+      code: "connector_not_configured",
+      message: profile.problem,
+    });
+  });
+
+  it("refuses to start sign-in at a plain-HTTP authorization endpoint in a profile that skipped the check", () => {
+    const { problem, ...unchecked } = connectorAuthProfile("github", oauthAir(https[0], https[1]), {
+      ANVIL_CONNECT_GITHUB_CLIENT_ID: "client-1",
+      ANVIL_CONNECT_GITHUB_CLIENT_SECRET: "shh",
+      ANVIL_CONNECT_GITHUB_AUTHORIZATION_ENDPOINT: "http://idp.example.com/authorize",
+    });
+    expect(problem).toContain("AUTHORIZATION_ENDPOINT");
+    const connect = new ConnectFlow({
+      vault: new ConnectionVault(tmp(), KEY),
+      profiles: new Map([["github", unchecked]]),
+      redirectUri: "http://127.0.0.1:8788/connect/callback",
+    });
+    expect(connect.start({ sub: "local:ada", connector: "github" })).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "connector_not_configured",
+    });
+  });
+
+  it("refuses the code exchange to a plain-HTTP token endpoint in a profile that skipped the check", async () => {
+    const { problem, ...unchecked } = connectorAuthProfile("github", oauthAir(https[0], https[1]), {
+      ANVIL_CONNECT_GITHUB_CLIENT_ID: "client-1",
+      ANVIL_CONNECT_GITHUB_CLIENT_SECRET: "shh",
+      ANVIL_CONNECT_GITHUB_TOKEN_ENDPOINT: "http://idp.example.com/token",
+    });
+    expect(problem).toContain("TOKEN_ENDPOINT");
+    const vault = new ConnectionVault(tmp(), KEY);
+    const fetchImpl = vi.fn(okToken);
+    const connect = new ConnectFlow({
+      vault,
+      profiles: new Map([["github", unchecked]]),
+      redirectUri: "http://127.0.0.1:8788/connect/callback",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const started = connect.start({ sub: "local:ada", connector: "github" });
+    if (!started.ok || started.kind !== "oauth") throw new Error("expected an OAuth start");
+    const state = new URL(started.url).searchParams.get("state") as string;
+    expect(await connect.callback({ state, code: "c" })).toMatchObject({
+      ok: false,
+      code: "connector_not_configured",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(vault.list("local:ada")).toEqual([]);
+  });
+
+  it.each([
+    "https://idp.example.com/token",
+    "http://127.0.0.1:8123/token",
+  ])("sends the code exchange to %s with redirect: error", async (endpoint) => {
+    const profile = connectorAuthProfile("github", oauthAir(https[0], https[1]), {
+      ANVIL_CONNECT_GITHUB_CLIENT_ID: "client-1",
+      ANVIL_CONNECT_GITHUB_CLIENT_SECRET: "shh",
+      ANVIL_CONNECT_GITHUB_TOKEN_ENDPOINT: endpoint,
+    });
+    expect(profile.problem).toBeUndefined();
+    const fetchImpl = vi.fn(okToken);
+    const connect = new ConnectFlow({
+      vault: new ConnectionVault(tmp(), KEY),
+      profiles: new Map([["github", profile]]),
+      redirectUri: "http://127.0.0.1:8788/connect/callback",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const started = connect.start({ sub: "local:ada", connector: "github" });
+    if (!started.ok || started.kind !== "oauth") throw new Error("expected an OAuth start");
+    const state = new URL(started.url).searchParams.get("state") as string;
+    expect(await connect.callback({ state, code: "c" })).toMatchObject({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(endpoint);
+    expect(fetchImpl.mock.calls[0]?.[1]?.redirect).toBe("error");
+  });
+
+  it("does not follow a real 307 from the token endpoint: the redirect target never sees the code", async () => {
+    const idp = await redirectingTokenEndpoint();
+    const vault = new ConnectionVault(tmp(), KEY);
+    const connect = new ConnectFlow({
+      vault,
+      profiles: new Map([
+        [
+          "github",
+          connectorAuthProfile("github", oauthAir(https[0], idp.url), {
+            ANVIL_CONNECT_GITHUB_CLIENT_ID: "client-1",
+            ANVIL_CONNECT_GITHUB_CLIENT_SECRET: "shh",
+          }),
+        ],
+      ]),
+      redirectUri: "http://127.0.0.1:8788/connect/callback",
+    });
+    const started = connect.start({ sub: "local:ada", connector: "github" });
+    if (!started.ok || started.kind !== "oauth") throw new Error("expected an OAuth start");
+    const state = new URL(started.url).searchParams.get("state") as string;
+    expect(await connect.callback({ state, code: "c" })).toMatchObject({
+      ok: false,
+      status: 502,
+      code: "token_endpoint_unreachable",
+    });
+    expect(idp.sinkBodies).toEqual([]);
+    expect(vault.list("local:ada")).toEqual([]);
   });
 
   it("does not store anything when the provider refuses the code", async () => {

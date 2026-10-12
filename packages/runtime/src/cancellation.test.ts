@@ -194,6 +194,7 @@ describe("FetchTransport honours HttpRequest.signal", () => {
         ca: pem("ca-cert.pem"),
         requestCert: true,
         rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
       },
       () => {
         // Never answer: only the caller's abort can end this request.

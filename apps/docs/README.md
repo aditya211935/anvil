@@ -52,6 +52,13 @@ Cookbook shell blocks marked with `# [docs-tested]` are executed by
 `packages/cli/src/cookbook-snippets.test.ts` in the main test suite. Mark only
 deterministic, offline blocks and make cleanup part of the snippet.
 
+## Browser support
+
+The site targets Chromium 116+, Safari and iOS 17+, and Firefox 125+.
+Starlight opens the narrow-screen sidebar through the Popover API, so older
+browsers get readable pages without that sidebar: `src/styles/custom.css` hides
+it there (and its menu button) and shows the sidebar again at desktop widths.
+
 ## Information architecture
 
 The sidebar is organized by developer intent:

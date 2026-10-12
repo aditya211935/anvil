@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { connect } from "node:net";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AirDocument } from "@anvil/air";
@@ -21,6 +22,11 @@ const read = (rel: string) =>
     "utf8",
   );
 
+/** A non-loopback IPv4 address of this machine, if it has one. */
+const externalIPv4 = Object.values(networkInterfaces())
+  .flat()
+  .find((entry) => entry && entry.family === "IPv4" && !entry.internal)?.address;
+
 let air: AirDocument;
 let dir: string;
 let child: ChildProcess;
@@ -29,7 +35,7 @@ let base: string;
 /** Boot mock/server.mjs on an ephemeral port and wait for its ready line. */
 function startMock(bundleDir: string): Promise<{ port: number; child: ChildProcess }> {
   const proc = spawn(process.execPath, [join(bundleDir, "mock", "server.mjs")], {
-    env: { ...process.env, PORT: "0", ANVIL_MOCK_SCENARIO: "" },
+    env: { ...process.env, PORT: "0", ANVIL_MOCK_SCENARIO: "", ANVIL_MOCK_HOST: "" },
     stdio: ["ignore", "ignore", "pipe"],
   });
   return new Promise((resolve, reject) => {
@@ -287,12 +293,71 @@ describe("generated mock server", () => {
     expect((await fetch(`${base}/payments/p_1`)).status).toBe(200);
   });
 
+  it("refuses a fault status Node cannot write, and keeps serving", async () => {
+    // Stored unchecked, the next matched request threw in json() and ended the mock.
+    await reset();
+    for (const status of [1000, 0, 99, 503.5, "503"]) {
+      const refused = await fetch(`${base}/__anvil/fault`, {
+        method: "POST",
+        body: JSON.stringify({ opId: "payments.customers.get", status, times: 1 }),
+      });
+      expect(refused.status, String(status)).toBe(400);
+      expect((await fetch(`${base}/customers/c_1`)).status, String(status)).toBe(200);
+    }
+    expect(child.exitCode).toBe(null);
+  });
+
   it("records every candidate operation for ambiguous routes", async () => {
     await reset();
     await fetch(`${base}/customers/c_1`);
     const [req] = await capture();
     if (!req) throw new Error("mock server captured no request");
     expect(req.matchedCandidates).toEqual(["payments.customers.get"]);
+  });
+
+  it("listens on loopback unless ANVIL_MOCK_HOST names another address", () => {
+    // Its control endpoints hand captures, scenarios, and faults to whoever reaches it.
+    const src = readFileSync(join(dir, "mock", "server.mjs"), "utf8");
+    expect(src).toContain('const MOCK_HOST = process.env.ANVIL_MOCK_HOST || "127.0.0.1";');
+    expect(src).toContain(".listen(Number(process.env.PORT ?? 8081), MOCK_HOST, function () {");
+  });
+
+  it("answers a request target the URL parser refuses with 400, and keeps serving", async () => {
+    // Node's parser admits these and `new URL` throws on them; thrown in the
+    // request's "end" handler, that was an uncaught exception that ended the mock.
+    const port = Number(new URL(base).port);
+    for (const target of ["//", "http://[", "http://:80/", "//[", "http://a:99999/"]) {
+      const socket = connect(port, "127.0.0.1");
+      await new Promise((resolve) => socket.once("connect", resolve));
+      socket.write(
+        `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+      );
+      let reply = "";
+      socket.setTimeout(5_000, () => socket.destroy());
+      socket.on("data", (chunk: Buffer) => {
+        reply += chunk.toString("utf8");
+      });
+      await new Promise((resolve) => socket.once("close", resolve));
+      expect(reply, target).toMatch(/^HTTP\/1\.1 400 /);
+      expect(reply.toLowerCase(), target).toContain("x-content-type-options: nosniff");
+      expect(reply, target).toContain(
+        '{"error":{"code":"bad_request","message":"Malformed request target."}}',
+      );
+    }
+    expect(child.exitCode).toBe(null);
+    expect((await fetch(`${base}/__anvil/capture`)).status).toBe(200);
+  });
+
+  it.skipIf(!externalIPv4)("is not reachable on this machine's network address", async () => {
+    const port = Number(new URL(base).port);
+    const error = await new Promise<NodeJS.ErrnoException | undefined>((resolve) => {
+      const socket = connect({ host: externalIPv4, port }, () => {
+        socket.destroy();
+        resolve(undefined);
+      });
+      socket.once("error", resolve);
+    });
+    expect(error?.code).toBe("ECONNREFUSED");
   });
 });
 

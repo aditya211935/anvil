@@ -71,6 +71,7 @@ async function withFacade<T>(
       wireBinding,
       client: session.client,
       onTelemetry: (record) => telemetry.push(record),
+      loopbackOnly: true,
     });
     const server = createServer(listener);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

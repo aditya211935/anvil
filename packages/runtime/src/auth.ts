@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AuthRequirement, effectiveAuthCarrier, type TlsClientMaterialRefs } from "@anvil/air";
 import type { InboundIdentity } from "./inbound-identity.js";
+import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 import type { HttpRequest, TlsClientMaterial } from "./transport.js";
 
 /**
@@ -233,6 +234,9 @@ export class EnvCredentialResolver implements CredentialResolver {
     const clientId = this.env[`${prefix}_CLIENT_ID`];
     const tokenEndpoint = this.env[`${prefix}_TOKEN_ENDPOINT`] ?? auth.provider?.tokenEndpoint;
     if (!refreshToken || !clientId || !tokenEndpoint) return null;
+    // The env override and the imported endpoint face the same rule: the POST
+    // below carries the refresh token and client secret.
+    if (!isSendableOAuthEndpoint(tokenEndpoint)) return null;
 
     const clientSecret = this.env[`${prefix}_CLIENT_SECRET`];
     const method = auth.provider?.clientAuth ?? "client_secret_basic";
@@ -255,6 +259,8 @@ export class EnvCredentialResolver implements CredentialResolver {
         method: "POST",
         headers,
         body: body.toString(),
+        // A 307/308 would re-POST the same credentials to wherever it points.
+        redirect: "error",
       });
       if (!res.ok) return null;
       const json = (await res.json()) as {

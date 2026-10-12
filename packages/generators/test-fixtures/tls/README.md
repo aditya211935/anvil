@@ -16,8 +16,11 @@ needed one, per the coordination note in `laneA2-sdk-auth-parity.md`.
 | --- | --- |
 | `ca-cert.pem` | Root of the test-only trust chain. Its private key is not checked in — it signed the two certs below and is no longer needed. |
 | `server-cert.pem` / `server-key.pem` | The test HTTPS server's certificate, `CN=127.0.0.1`, signed by the CA, with a `subjectAltName=IP:127.0.0.1` (Node and Go verify against the SAN, not the CN). |
-| `client-cert.pem` / `client-key.pem` | The client certificate the generated SDKs present, `CN=anvil-sdk-client`, in original (server: PKCS#1, client: PKCS#1) form — accepted by `node:https`, Python's `ssl`, and Go's `tls.X509KeyPair` directly. |
-| `server-key-pkcs8.pem` / `client-key-pkcs8.pem` | The same two private keys, converted to PKCS#8. The Java SDK's `Mtls.java` only parses PKCS#8 (`-----BEGIN PRIVATE KEY-----`) with `java.security.KeyFactory` — a traditional PKCS#1 RSA key must be converted first, and these are that conversion, checked in so the Java-facing tests need no `openssl` on the machine that runs them. |
+| `client-cert.pem` / `client-key.pem` | The client certificate the generated SDKs present, `CN=anvil-sdk-client`. |
+
+Both private keys are PKCS#8, which is what `openssl req -newkey` writes. That
+is accepted as-is by `node:https`, Python's `ssl`, Go's `tls.X509KeyPair` and
+the Java SDK's `Mtls.java`, so no conversion step is needed.
 
 Expiry: 3650 days from generation (2026-09-03) — long enough that this
 fixture should never need mid-project renewal, but it is not permanent;
@@ -44,10 +47,6 @@ openssl req -newkey rsa:2048 -keyout client-key.pem -out client.csr \
   -nodes -subj "/CN=anvil-sdk-client"
 openssl x509 -req -in client.csr -CA ca-cert.pem -CAkey ca-key.pem \
   -CAcreateserial -out client-cert.pem -days 3650
-
-# PKCS#8 conversions for the Java SDK
-openssl pkcs8 -topk8 -nocrypt -in server-key.pem -out server-key-pkcs8.pem
-openssl pkcs8 -topk8 -nocrypt -in client-key.pem -out client-key-pkcs8.pem
 
 rm -f server.csr client.csr ca-cert.srl server-ext.cnf ca-key.pem
 ```

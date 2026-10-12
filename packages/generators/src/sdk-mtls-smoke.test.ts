@@ -101,6 +101,7 @@ beforeAll(async () => {
       ca: readTls("ca-cert.pem"),
       requestCert: true,
       rejectUnauthorized: true,
+      minVersion: "TLSv1.2",
     },
     (req, res) => {
       const peer = (req.socket as TLSSocket).getPeerCertificate();

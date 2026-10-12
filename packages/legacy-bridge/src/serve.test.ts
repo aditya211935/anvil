@@ -1,3 +1,4 @@
+import { request } from "node:http";
 import {
   finalizeLegacyBridgeConformanceReport,
   finalizeLegacyCapabilityBindingRecord,
@@ -153,6 +154,28 @@ describe("serveLegacyBridge", () => {
     const invoked = await fetch(`${server.url}/invoke`, { method: "POST", body: '{"a":1}' });
     expect(invoked.status).toBe(200);
     expect(await invoked.text()).toBe('{"a":1}');
+  });
+
+  it("bound to loopback, refuses a foreign Host and a browser's Origin before the broker", async () => {
+    const double = new InProcessBrokerDouble((body) => body);
+    const server = await serve({ client: double });
+    const status = (headers: Record<string, string>) =>
+      new Promise<number>((resolve, reject) => {
+        const req = request(
+          `${server.url}/invoke`,
+          { method: "POST", headers, agent: false },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        );
+        req.on("error", reject);
+        req.end("{}");
+      });
+    expect(await status({ host: `attacker.example:${server.port}` })).toBe(403);
+    expect(await status({ origin: "http://evil.example" })).toBe(403);
+    expect(double.sendAttempts).toBe(0);
+    expect(await status({ host: `localhost:${server.port}` })).toBe(200);
   });
 
   it("refuses a non-loopback host unless explicitly allowed", async () => {

@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,6 +41,7 @@ function expectForbidden(reply: { status: number; json: unknown; headers: Header
   expect(reply.status).toBe(403);
   expect(zErrorEnvelope.parse(reply.json).error.code).toBe("console/forbidden");
   expect(reply.headers.get("access-control-allow-origin")).toBeNull();
+  expect(reply.headers.get("x-content-type-options")).toBe("nosniff");
 }
 
 describe("1. bind 127.0.0.1 only", () => {
@@ -311,6 +312,178 @@ describe("6. paths stay inside the workspace root", () => {
   });
 });
 
+/** One raw HTTP/1.1 exchange with the `Host` line chosen by the test (`null` sends none, as HTTP/1.0). */
+async function rawRequest(
+  method: "GET" | "POST",
+  path: string,
+  host: string | null,
+  extra: Record<string, string> = {},
+  body?: string,
+): Promise<{ status: number; headers: string; text: string }> {
+  const socket = connect(server.port, "127.0.0.1");
+  await once(socket, "connect");
+  const head = Object.entries({
+    ...(host === null ? {} : { Host: host }),
+    Connection: "close",
+    ...extra,
+    ...(body === undefined ? {} : { "Content-Length": String(Buffer.byteLength(body)) }),
+  }).map(([name, value]) => `${name}: ${value}\r\n`);
+  socket.write(
+    `${method} ${path} HTTP/1.${host === null ? 0 : 1}\r\n${head.join("")}\r\n${body ?? ""}`,
+  );
+  let response = "";
+  // A listener that never answers fails the exchange in seconds, not the test's 30s.
+  socket.setTimeout(15_000, () => socket.destroy());
+  socket.on("data", (chunk: Buffer) => {
+    response += chunk.toString("utf8");
+  });
+  await new Promise<void>((resolve) => {
+    socket.on("close", resolve);
+    socket.on("error", resolve);
+  });
+  const split = response.indexOf("\r\n\r\n");
+  return {
+    status: Number(/^HTTP\/1\.[01] (\d{3}) /.exec(response)?.[1]),
+    headers: response.slice(0, split).toLowerCase(),
+    text: response.slice(split + 4),
+  };
+}
+
+describe("7. the Host header names this server (DNS rebinding)", () => {
+  // A rebinding page is "same-origin" with this socket, so it needs no token to
+  // GET and sends no foreign Origin; the Host it sends is its own domain.
+  const foreign = (port: number) => [
+    "attacker.example",
+    `attacker.example:${port}`,
+    `127.0.0.1.attacker.example:${port}`,
+    `localhost.attacker.example:${port}`,
+    `127.0.0.1:${port + 1}`,
+    `localhost:${port + 1}`,
+    "127.0.0.1",
+    "localhost",
+    `[::1]:${port}`,
+    `127.0.0.1:${port}.attacker.example`,
+    "",
+  ];
+
+  it("refuses a GET of the API or the page for any other Host, serving neither", async () => {
+    for (const host of [...foreign(server.port), null]) {
+      for (const path of ["/api/workspace", "/"]) {
+        const reply = await rawRequest("GET", path, host);
+        const label = `${host} ${path}`;
+        expect(reply.status, label).toBe(403);
+        expect(reply.headers, label).toContain("x-content-type-options: nosniff");
+        expect(zErrorEnvelope.parse(JSON.parse(reply.text)).error.code, label).toBe(
+          "console/forbidden",
+        );
+        // Neither the workspace data nor the page that embeds the token.
+        expect(reply.text, label).not.toContain(server.token);
+        expect(reply.text, label).not.toContain("payments");
+      }
+    }
+  });
+
+  it("refuses a mutation for any other Host even with the right token and Origin", async () => {
+    const auth = {
+      Origin: server.url,
+      "X-Anvil-Console-Token": server.token,
+      "Content-Type": "application/json",
+    };
+    for (const host of [...foreign(server.port), null]) {
+      const reply = await rawRequest("POST", APPROVE, host, auth, JSON.stringify(BODY));
+      expect(reply.status, String(host)).toBe(403);
+      expect(reply.headers, String(host)).toContain("x-content-type-options: nosniff");
+      expect(zErrorEnvelope.parse(JSON.parse(reply.text)).error.code).toBe("console/forbidden");
+    }
+    // The same request with an accepted Host reaches the handler (a refusal for
+    // the unknown id, not the gate's 403), so the 403s above came from the Host.
+    const ok = await rawRequest(
+      "POST",
+      APPROVE,
+      `127.0.0.1:${server.port}`,
+      auth,
+      JSON.stringify(BODY),
+    );
+    expect(ok.status).toBe(409);
+  });
+
+  it("serves 127.0.0.1:<port> and localhost:<port>, whatever the case of the name", async () => {
+    for (const host of [
+      `127.0.0.1:${server.port}`,
+      `localhost:${server.port}`,
+      `LOCALHOST:${server.port}`,
+    ]) {
+      const api = await rawRequest("GET", "/api/workspace", host);
+      expect(api.status, host).toBe(200);
+      const page = await rawRequest("GET", "/", host);
+      expect(page.status, host).toBe(200);
+      expect(page.headers, host).toContain("text/html");
+    }
+  });
+
+  it("answers a request target the URL parser refuses with 400, behind the Host gate", async () => {
+    // Node's parser admits these and `new URL` throws on them. That parse sat
+    // outside the refusal path, so the throw ended the process, Host gate unrun.
+    const host = `127.0.0.1:${server.port}`;
+    const auth = {
+      Origin: server.url,
+      "X-Anvil-Console-Token": server.token,
+      "Content-Type": "application/json",
+    };
+    for (const target of ["//", "http://[", "http://:80/", "//[", "http://a:99999/"]) {
+      for (const reply of [
+        await rawRequest("GET", target, host),
+        await rawRequest("POST", target, host, auth, JSON.stringify(BODY)),
+      ]) {
+        expect(reply.status, target).toBe(400);
+        expect(reply.headers, target).toContain("x-content-type-options: nosniff");
+        expect(zErrorEnvelope.parse(JSON.parse(reply.text)).error).toEqual({
+          code: "console/invalid_request",
+          message: "Malformed request target.",
+        });
+      }
+      // A foreign Host is refused by the gate first, as for any other target.
+      const rebound = await rawRequest("GET", target, `attacker.example:${server.port}`);
+      expect(rebound.status, target).toBe(403);
+    }
+    // The access log names no path it could not parse.
+    expect(log).toContainEqual(expect.stringMatching(/^GET - 400 \d+ms$/));
+    expect((await rawRequest("GET", "/api/workspace", host)).status).toBe(200);
+  });
+});
+
+describe("8. no page may frame the console (clickjacking)", () => {
+  function expectNoFraming(reply: { headers: Headers }, label: string): void {
+    expect(reply.headers.get("content-security-policy"), label).toBe("frame-ancestors 'none'");
+    expect(reply.headers.get("x-frame-options"), label).toBe("DENY");
+  }
+
+  it("forbids framing on the page, built or not, its assets, an API read, and a refusal", async () => {
+    const uiDir = join(tmpdir(), `anvil-console-frame-ui-${process.pid}-${Date.now()}`);
+    mkdirSync(join(uiDir, "assets"), { recursive: true });
+    writeFileSync(join(uiDir, "index.html"), "<!doctype html><html><head></head></html>");
+    writeFileSync(join(uiDir, "assets", "app.js"), "console.log('ui');");
+    const built = await startServer(ws.root, { uiDir });
+    const unbuilt = await startServer(ws.root, { uiDir: join(uiDir, "absent") });
+    try {
+      for (const [label, reply] of [
+        ["built page", await built.client.get("/")],
+        ["asset", await built.client.get("/assets/app.js")],
+        ["unbuilt page", await unbuilt.client.get("/")],
+        ["api read", await client.get("/api/workspace")],
+        ["refusal", await client.post(APPROVE, BODY, { token: null })],
+      ] as const) {
+        expect(reply.status, label).toBe(label === "refusal" ? 403 : 200);
+        expectNoFraming(reply, label);
+      }
+    } finally {
+      await built.server.close();
+      await unbuilt.server.close();
+      rmSync(uiDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the token never leaks", () => {
   it("appears in no /api response and in no log line", async () => {
     const texts: string[] = [];
@@ -330,7 +503,7 @@ describe("the token never leaks", () => {
     expect(log.length).toBeGreaterThan(0);
     for (const line of log) {
       expect(line).not.toContain(server.token);
-      expect(line).toMatch(/^(GET|POST|OPTIONS) \/\S* \d{3} \d+ms$/);
+      expect(line).toMatch(/^(GET|POST|OPTIONS) (\/\S*|-) \d{3} \d+ms$/);
     }
   });
 });

@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AuthRequirement, AuthRequirement as AuthSchema } from "@anvil/air";
@@ -272,6 +273,108 @@ describe("EnvCredentialResolver — oauth2_authorization_code", () => {
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(await r.resolve("prod", withProvider())).toBeNull();
+  });
+
+  // The refresh POST carries the refresh token and client secret, so it goes
+  // over HTTPS only (plain HTTP to the exact 127.0.0.1 literal, which never
+  // leaves the host), whichever source named the endpoint.
+  const refreshEnv = {
+    ANVIL_PROD_REFRESH_TOKEN: "refresh-me",
+    ANVIL_PROD_CLIENT_ID: "client-1",
+    ANVIL_PROD_CLIENT_SECRET: "shh",
+  };
+  const okToken = async (_url?: string | URL, _init?: RequestInit) =>
+    new Response(JSON.stringify({ access_token: "t", expires_in: 3600 }), { status: 200 });
+  /** Resolve with `endpoint` named by the AIR provider, or by the env override over an https one. */
+  const resolveVia = (source: "provider" | "env", endpoint: string, fetchImpl: typeof okToken) =>
+    new EnvCredentialResolver(
+      source === "env" ? { ...refreshEnv, ANVIL_PROD_TOKEN_ENDPOINT: endpoint } : refreshEnv,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    ).resolve(
+      "prod",
+      source === "env" ? withProvider() : withProvider({ provider: { tokenEndpoint: endpoint } }),
+    );
+
+  it.each([
+    ...[
+      "http://idp.example.com/token",
+      "http://localhost:8123/token",
+      "http://10.0.0.5/token",
+      "http://127.0.0.1.nip.io/token",
+      "http://127.0.0.1@evil.example/token",
+      "ftp://idp.example.com/token",
+    ].flatMap((endpoint) => [
+      { endpoint, source: "provider" as const },
+      { endpoint, source: "env" as const },
+    ]),
+    // AIR's schema refuses an unparseable provider endpoint; the override is free text.
+    { endpoint: "not a url", source: "env" as const },
+  ])("refuses to send the refresh grant to $endpoint named by the $source", async ({
+    endpoint,
+    source,
+  }) => {
+    const fetchImpl = vi.fn(okToken);
+    expect(await resolveVia(source, endpoint, fetchImpl)).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "provider",
+    "env",
+  ] as const)("admits plain HTTP to the exact 127.0.0.1 literal named by the %s", async (source) => {
+    const endpoint = "http://127.0.0.1:8123/__anvil/oauth/token";
+    const fetchImpl = vi.fn(okToken);
+    expect(await resolveVia(source, endpoint, fetchImpl)).toEqual({
+      headers: { Authorization: "Bearer t" },
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST" }));
+  });
+
+  it("sends the refresh grant with redirect: error, so a 307/308 cannot re-POST the secret", async () => {
+    const fetchImpl = vi.fn(okToken);
+    expect(await resolveVia("provider", "https://idp.example.com/token", fetchImpl)).toEqual({
+      headers: { Authorization: "Bearer t" },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[1]?.redirect).toBe("error");
+  });
+
+  it("does not follow a real 307 from the token endpoint: the redirect target never sees the grant", async () => {
+    const sinkBodies: string[] = [];
+    const sink = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        sinkBodies.push(body);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "stolen", expires_in: 3600 }));
+      });
+    });
+    let sinkUrl = "";
+    const idp = createServer((_req, res) => {
+      res.writeHead(307, { location: sinkUrl });
+      res.end();
+    });
+    const listen = (server: Server) =>
+      new Promise<string>((resolve) => {
+        server.listen(0, "127.0.0.1", () => {
+          resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+        });
+      });
+    try {
+      sinkUrl = `${await listen(sink)}/token`;
+      const idpUrl = `${await listen(idp)}/token`;
+      // No fetchImpl: the platform fetch, whose default redirect mode is "follow".
+      const r = new EnvCredentialResolver({ ...refreshEnv, ANVIL_PROD_TOKEN_ENDPOINT: idpUrl });
+      expect(await r.resolve("prod", withProvider())).toBeNull();
+      expect(sinkBodies).toEqual([]);
+    } finally {
+      await Promise.all(
+        [sink, idp].map((s) => new Promise<void>((resolve) => s.close(() => resolve()))),
+      );
+    }
   });
 
   it("keeps a rotated refresh token: the next refresh uses the new one, and the file is rewritten", async () => {

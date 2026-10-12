@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { loadBundleAir, readBundleDir, resolveBundleDir } from "@anvil/generators";
+import { isLoopbackHost } from "@anvil/legacy-bridge";
 import {
   JsonlTrace,
   Simulator,
@@ -164,10 +165,22 @@ export async function startSimulateServe(
       .principals()
       .slice()
       .sort((a, b) => b.scopes.length - a.scopes.length)[0]?.id;
+  const host = opts.host ?? "127.0.0.1";
+  if (!isLoopbackHost(host)) {
+    // Anyone who can reach it acts as the default principal, which holds
+    // every scope unless --principal names another.
+    const unnamed = principal
+      ? ` and treats a request that names no principal as '${principal}'`
+      : "";
+    io.err(
+      `warning: --host ${host} is not a loopback address; the simulator serves unauthenticated HTTP${unnamed}. ` +
+        "Serving it there is your decision.",
+    );
+  }
   let http: SimulatorHttpServer;
   try {
     http = await serveSimulatorHttp(sim, air, {
-      host: opts.host ?? "127.0.0.1",
+      host,
       port,
       ...(principal ? { principal } : {}),
       ...(trace ? { trace } : {}),

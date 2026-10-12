@@ -10,7 +10,11 @@ export async function handleBusinessHttp(
   readBody: () => Promise<{ ok: true; value: unknown } | { ok: false }>,
 ): Promise<void> {
   const reply = (status: number, body: unknown) => {
-    res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+    res.writeHead(status, {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
     res.end(JSON.stringify(body));
   };
   if (req.method !== "POST") return reply(405, { error: "Use POST for business actions." });

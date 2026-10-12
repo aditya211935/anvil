@@ -115,7 +115,13 @@ export async function handleRestCall(
     req.resume();
     return fail(415, "unsupported_media_type", "Content-Type must be application/json.");
   }
-  const tool = decodeURIComponent(url.pathname.slice("/call/".length));
+  // A bad escape (`/call/%`) names no tool: the same 404, never a URIError.
+  let tool: string;
+  try {
+    tool = decodeURIComponent(url.pathname.slice("/call/".length));
+  } catch {
+    tool = "";
+  }
   if (!/^[A-Za-z0-9_.-]{1,128}$/.test(tool)) return fail(404, "not_found", "No such tool.");
   const body = await readSmallJson(req);
   if (!body) return fail(400, "validation_error", "Expected a JSON object body.");
@@ -159,6 +165,7 @@ export async function handleRestCall(
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
       ...(effect !== undefined ? { "x-anvil-effect": headerJson(effect) } : {}),
     };
     const decoded = decodeCallResult(result);

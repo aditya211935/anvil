@@ -112,6 +112,20 @@ export {
  *      incidentally (no report regeneration, no cache files inside a bundle,
  *      and no `<root>/.anvil/console` scratch directory — see "Where the
  *      console writes" below; `server.test.ts` guards both).
+ *   7. Answer EVERY request, GET included, only when its `Host` header is
+ *      `127.0.0.1:<port>` or `localhost:<port>` (this server's own port).
+ *      Anything else is a `403` with the same `console/forbidden` code whose
+ *      message names the Host rule — the one refusal that says which check
+ *      failed: a Host is no secret, and the message tells an operator behind
+ *      a port forward what to fix. An HTTP/1.1 request with no Host never
+ *      reaches the listener (Node answers `400` itself, `requireHostHeader`);
+ *      an HTTP/1.0 one gets the `403`. A DNS-rebinding page reaches the
+ *      socket as its own origin, so neither the token nor the Origin check
+ *      stops it reading a GET or the served page.
+ *   8. Forbid framing on every response: `Content-Security-Policy:
+ *      frame-ancestors 'none'` and `X-Frame-Options: DENY`. A page that
+ *      frames the console under a decoy turns the reviewer's clicks into
+ *      same-origin mutations, which items 2-3 cannot tell from real ones.
  *
  * These are the only defenses between a drive-by page and an approval, so a
  * change to any of them is a safety change and is reviewed as one.

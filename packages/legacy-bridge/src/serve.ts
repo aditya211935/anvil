@@ -20,7 +20,8 @@
  *    facade speaks plain HTTP with no authentication of its own — it is the
  *    runtime's protocol facade, meant to sit beside the runtime on the same
  *    host — so binding it to a routable interface is a decision, never a
- *    default.
+ *    default. Bound to loopback, it also answers only a `Host` that names
+ *    loopback with its own port (the facade's DNS-rebinding gate).
  *
  * What this module does not do: connect to a broker (the caller supplies a
  * connected `QueueBrokerClient`), resolve credentials, or claim readiness
@@ -35,7 +36,10 @@ import {
 } from "@anvil/compiler/legacy";
 import type { QueueBrokerClient } from "./broker.js";
 import { createLegacyBridgeFacade, type LegacyBridgeTelemetryRecord } from "./facade.js";
+import { isLoopbackHost } from "./loopback.js";
 import { buildQueueWireBinding } from "./wire-binding.js";
+
+export { isLoopbackHost } from "./loopback.js";
 
 export type LegacyBridgeServeRefusalReason =
   | "not_conformant"
@@ -57,14 +61,6 @@ export class LegacyBridgeServeRefusal extends Error {
 }
 
 export const LOOPBACK_HOST = "127.0.0.1";
-
-/** `127.0.0.0/8`, `::1`, and the `localhost` name — the interfaces a bridge
- *  binds without an explicit operator decision. */
-export function isLoopbackHost(host: string): boolean {
-  const bare = host.replace(/^\[(.*)\]$/, "$1").toLowerCase();
-  if (bare === "localhost" || bare === "::1" || bare === "::ffff:127.0.0.1") return true;
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare);
-}
 
 /**
  * The gate: throw unless `binding` is `conformance_passed` and `report` is
@@ -147,7 +143,8 @@ export async function serveLegacyBridge(
 ): Promise<LegacyBridgeServer> {
   assertLegacyBindingServable(options.binding, options.conformanceReport);
   const host = options.host ?? LOOPBACK_HOST;
-  if (!isLoopbackHost(host) && options.allowNonLoopbackHost !== true) {
+  const loopback = isLoopbackHost(host);
+  if (!loopback && options.allowNonLoopbackHost !== true) {
     throw new LegacyBridgeServeRefusal(
       "host_refused",
       `refusing to bind '${host}': the bridge serves unauthenticated HTTP and binds loopback ` +
@@ -160,6 +157,7 @@ export async function serveLegacyBridge(
     wireBinding,
     client: options.client,
     onTelemetry: options.onTelemetry,
+    loopbackOnly: loopback,
   });
   const server: Server = createServer(listener);
   await new Promise<void>((resolve, reject) => {

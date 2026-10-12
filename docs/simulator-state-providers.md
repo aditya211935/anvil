@@ -50,7 +50,7 @@ protocol sends it, so any HTTP client of the real API can target it:
 | `--contract <path>` | Generated bundle directory, or its `air.yaml` |
 | `--provider-cmd <command>` | Shell command that starts the provider. Omit it to serve the built-in seeded store. |
 | `--provider-timeout <ms>` | Deadline for each provider request (default 30000) |
-| `--host`, `--port` | Bind address (default `127.0.0.1`, port 0 picks a free one) |
+| `--host`, `--port` | Bind address (default `127.0.0.1`, port 0 picks a free one). A non-loopback host prints a warning: the server has no authentication of its own. |
 | `--seed <n>` | Simulator seed: fault decisions and the built-in store derive from it |
 | `--capability <id>` | Serve one discovered capability instead of the whole service |
 | `--principal <id>` | Principal for requests that name none (default: the profile holding every scope, `admin`) |

@@ -79,6 +79,18 @@ able to drive them, so:
 - Every write must come from the console's own origin. Requests from any other
   page are refused, and the server never emits CORS headers, so another origin
   can read nothing either.
+- Every request, reads included, must address the console as `127.0.0.1` or
+  `localhost` on its own port. A web page whose domain has been re-pointed at
+  your machine (DNS rebinding) sends its own domain in the `Host` header, so it
+  is refused too and cannot read the API or the page that carries the token.
+  Reaching the console through a port forward on a different local port is
+  refused for the same reason, so forward to the same local port number.
+  Writes also need the Origin the console prints (`http://127.0.0.1:<port>`),
+  so open that URL rather than `localhost`.
+- No other page may frame the console. Every response says so
+  (`Content-Security-Policy: frame-ancestors 'none'` and
+  `X-Frame-Options: DENY`), so a page cannot hide the console under a decoy
+  and turn your clicks into approvals.
 - Bodies are JSON only, capped in size, and validated against the API contract
   before any library function runs.
 - Reads never write. No report is regenerated, no cache file lands in a

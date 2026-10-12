@@ -80,7 +80,7 @@ export const LegacyInventoryDiff = DiffCore.extend({
   });
 export type LegacyInventoryDiff = z.infer<typeof LegacyInventoryDiff>;
 
-function sha(value: unknown): `sha256:${string}` {
+function sha256(value: unknown): `sha256:${string}` {
   return `sha256:${hashCanonical(value)}`;
 }
 
@@ -99,11 +99,11 @@ function lineageMap(
       logicalCapabilityId,
       candidateId: candidate.candidateId,
       coordinate: candidate.coordinate,
-      candidateHash: sha(candidate),
-      coordinateHash: sha(candidate.coordinate),
-      invocationHash: sha(candidate.invocation),
-      evidenceHash: sha([...candidate.evidenceIds].sort()),
-      claimsHash: sha(
+      candidateHash: sha256(candidate),
+      coordinateHash: sha256(candidate.coordinate),
+      invocationHash: sha256(candidate.invocation),
+      evidenceHash: sha256([...candidate.evidenceIds].sort()),
+      claimsHash: sha256(
         candidate.claims.map((claim) => ({
           dimension: claim.dimension,
           state: claim.state,
@@ -113,13 +113,13 @@ function lineageMap(
           })),
         })),
       ),
-      conflictsHash: sha(
+      conflictsHash: sha256(
         candidate.conflicts.map((conflict) => ({
           dimension: conflict.dimension,
           values: conflict.values,
         })),
       ),
-      dispositionHash: sha({
+      dispositionHash: sha256({
         businessSemantics: candidate.businessSemantics,
         disposition: candidate.disposition,
       }),

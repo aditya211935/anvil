@@ -65,6 +65,23 @@ async function defaultTransport(endpoint: string, options: ProbeOptions): Promis
   return new StdioClientTransport({ command, args });
 }
 
+/**
+ * The 3xx status of a redirect the HTTP transport did not follow. Since MCP SDK
+ * 1.32 it follows a redirect only within the endpoint's origin, so `--header`
+ * values never reach a host the operator did not name; that default is kept.
+ */
+async function redirectStatus(error: unknown): Promise<number | undefined> {
+  const { StreamableHTTPError } = await import(
+    "@modelcontextprotocol/sdk/client/streamableHttp.js"
+  );
+  return error instanceof StreamableHTTPError &&
+    typeof error.code === "number" &&
+    error.code >= 300 &&
+    error.code < 400
+    ? error.code
+    : undefined;
+}
+
 function toolsFrom(raw: unknown): McpTool[] {
   const list = (raw as { tools?: unknown }).tools;
   if (!Array.isArray(list)) return [];
@@ -131,16 +148,24 @@ export function mcpProbe(options: ProbeOptions = {}): McpProbe {
       try {
         await deadline(client.connect(transport), "handshake");
       } catch (error) {
+        if (transportKindFor(endpoint) !== "streamable-http") {
+          return {
+            ok: false,
+            code: "unreachable",
+            message: `the MCP server could not be started: ${error instanceof Error ? error.message : "unknown error"}`,
+          };
+        }
         // Never echo the transport's message verbatim for an HTTP endpoint: it
         // can carry the URL, and a Moodle MCP endpoint carries its token in the
         // query string.
+        const redirect = await redirectStatus(error);
         return {
           ok: false,
           code: "unreachable",
           message:
-            transportKindFor(endpoint) === "streamable-http"
+            redirect === undefined
               ? "the MCP endpoint could not be reached or refused the handshake"
-              : `the MCP server could not be started: ${error instanceof Error ? error.message : "unknown error"}`,
+              : `the MCP endpoint answered HTTP ${redirect} with a redirect, which is not followed (only a 307 or 308 within the same origin is); pass the final (post-redirect) URL as the endpoint`,
         };
       }
       try {

@@ -23,7 +23,14 @@ function withMtlsServer(
 ): Promise<{ server: Server; url: string }> {
   return new Promise((resolve) => {
     const server = createServer(
-      { cert: SERVER_CERT, key: SERVER_KEY, ca: CA, requestCert: true, rejectUnauthorized: true },
+      {
+        cert: SERVER_CERT,
+        key: SERVER_KEY,
+        ca: CA,
+        requestCert: true,
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      },
       handler,
     );
     server.listen(0, "127.0.0.1", () => {

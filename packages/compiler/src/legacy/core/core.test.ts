@@ -20,7 +20,7 @@ import {
   verifyLegacyInventory,
 } from "./index.js";
 
-const sha = (digit: string) => `sha256:${digit.repeat(64)}` as const;
+const sha256Digest = (digit: string) => `sha256:${digit.repeat(64)}` as const;
 
 const coordinate: LegacyDeploymentCoordinate = {
   environment: "prod-au",
@@ -28,7 +28,7 @@ const coordinate: LegacyDeploymentCoordinate = {
   application: "payments",
   module: "refund-ejb",
   component: "RefundListener",
-  deploymentDigest: sha("a"),
+  deploymentDigest: sha256Digest("a"),
 };
 
 function artifact(
@@ -38,7 +38,7 @@ function artifact(
 ): LegacyArtifact {
   return createLegacyArtifact({
     schemaVersion: 1,
-    digest: sha(digit),
+    digest: sha256Digest(digit),
     bytes: 42,
     mediaType: "application/json",
     role: kind === "documentation" ? "documentation" : "runtime_configuration",
@@ -133,7 +133,7 @@ describe("legacy content-addressed records", () => {
     expect(() =>
       LegacyArtifactInput.parse({
         schemaVersion: 1,
-        digest: sha("2"),
+        digest: sha256Digest("2"),
         bytes: 1,
         role: "application_binary",
         path: "../../server.xml",
@@ -146,7 +146,7 @@ describe("legacy content-addressed records", () => {
     expect(() =>
       LegacyArtifactInput.parse({
         schemaVersion: 1,
-        digest: sha("3"),
+        digest: sha256Digest("3"),
         bytes: 12,
         role: "runtime_configuration",
         path: "websphere/resources.json",

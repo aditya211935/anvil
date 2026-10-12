@@ -1,8 +1,8 @@
-import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type AirDocument, operationSafetyInputKeys } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { type Check, fc, type JsonValue, type Property, type Scenario, Step } from "@anvil/fuzz";
+import { createGuardedServer } from "@anvil/mcp-runtime";
 import type { FuzzFixtureFactory } from "./fixture.js";
 
 /** Owned test contract. Assertions below are hand-authored business invariants. */
@@ -88,7 +88,9 @@ export const paymentFuzzFixture: FuzzFixtureFactory = async (_bundle, _seed, sig
   let dropNext = false;
   const ledger = new Map<string, { amount: number; value: { id: string; amount: number } }>();
   const wire: JsonValue[] = [];
-  const server = createServer(async (request, response) => {
+  // Guarded: a malformed target (`GET //`) or a thrown error is answered, never a
+  // rejection that ends the `anvil fuzz` process this fixture runs in.
+  const server = createGuardedServer(async (request, response) => {
     const send = (status: number, body: unknown) => {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(body));

@@ -353,6 +353,12 @@ substitutes (random when the declared URI names none or names `0`; the broker's
 own listener always binds `127.0.0.1` regardless of the declared host, since
 `localhost` resolves there).
 
+The runtime sends its refresh grant only to an `https://` token endpoint (plain
+`http://` only to the exact host `127.0.0.1`), whether `token_endpoint` or an
+`ANVIL_<PROFILE>_TOKEN_ENDPOINT` override names it — any other endpoint fails
+closed as `auth_required` before the refresh token leaves the process — and
+never follows a redirect from it.
+
 Both `reviewed_by` and `review_reason` must be non-empty or the entry stays
 `review_required` with a note naming exactly which field is still missing —
 this is the only approval path on a receipt-bound gateway bundle, where

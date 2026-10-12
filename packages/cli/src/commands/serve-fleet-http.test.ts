@@ -1,4 +1,6 @@
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { connect as dial } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { airToJson, loadAirDocument, Operation } from "@anvil/air";
@@ -7,7 +9,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
-import { type FleetHttpHandle, isLoopbackHost, startFleetHttp } from "./serve-fleet-http.js";
+import { isLoopbackHost } from "./fleet-http-io.js";
+import { type FleetHttpHandle, startFleetHttp } from "./serve-fleet-http.js";
 
 /**
  * `anvil serve mcp --fleet --http <port>`: a real MCP client over a real
@@ -83,6 +86,85 @@ async function connect(
   await client.connect(transport);
   return { client, transport };
 }
+
+/** One raw HTTP exchange with the `Host` line chosen by the test (`null` sends HTTP/1.0 with none). */
+async function rawExchange(
+  port: number,
+  method: "GET" | "POST",
+  path: string,
+  host: string | null,
+  body?: string,
+  origin?: string,
+): Promise<{ status: number; headers: string; json: unknown }> {
+  const socket = dial(port, "127.0.0.1");
+  await once(socket, "connect");
+  const lines = [
+    ...(host === null ? [] : [`Host: ${host}`]),
+    ...(origin === undefined ? [] : [`Origin: ${origin}`]),
+    "Connection: close",
+    "Accept: application/json, text/event-stream",
+    ...(body === undefined
+      ? []
+      : ["Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`]),
+  ];
+  socket.write(
+    `${method} ${path} HTTP/1.${host === null ? 0 : 1}\r\n${lines.join("\r\n")}\r\n\r\n${body ?? ""}`,
+  );
+  // The MCP transport answers `Connection: keep-alive` whatever was asked, so
+  // stop at the end of the response rather than waiting for the close.
+  let response = "";
+  // A listener that never answers fails the exchange in seconds, not the test's 30s.
+  socket.setTimeout(15_000, () => socket.destroy());
+  const complete = (): boolean => {
+    const split = response.indexOf("\r\n\r\n");
+    if (split < 0) return false;
+    const headers = response.slice(0, split).toLowerCase();
+    const body = response.slice(split + 4);
+    const length = /content-length: (\d+)/.exec(headers)?.[1];
+    if (length !== undefined) return Buffer.byteLength(body) >= Number(length);
+    return headers.includes("transfer-encoding: chunked") && body.endsWith("0\r\n\r\n");
+  };
+  await new Promise<void>((resolve) => {
+    socket.on("data", (chunk: Buffer) => {
+      response += chunk.toString("utf8");
+      if (complete()) resolve();
+    });
+    socket.on("close", resolve);
+    socket.on("error", resolve);
+  });
+  socket.destroy();
+  const split = response.indexOf("\r\n\r\n");
+  const headers = response.slice(0, split).toLowerCase();
+  const raw = response.slice(split + 4);
+  const text = headers.includes("transfer-encoding: chunked") ? dechunk(raw) : raw;
+  return {
+    status: Number(/^HTTP\/1\.[01] (\d{3}) /.exec(response)?.[1]),
+    headers,
+    json: text.trim().startsWith("{") ? JSON.parse(text) : text,
+  };
+}
+
+function dechunk(raw: string): string {
+  let text = "";
+  for (let rest = raw; ; ) {
+    const eol = rest.indexOf("\r\n");
+    const size = Number.parseInt(rest.slice(0, eol), 16);
+    if (!(size > 0)) return text;
+    text += rest.slice(eol + 2, eol + 2 + size);
+    rest = rest.slice(eol + 2 + size + 2);
+  }
+}
+
+const INITIALIZE = JSON.stringify({
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: {
+    protocolVersion: "2025-03-26",
+    capabilities: {},
+    clientInfo: { name: "t", version: "0" },
+  },
+});
 
 describe("anvil serve mcp --fleet --http", () => {
   it("serves two mounted bundles to a real MCP client over StreamableHTTP under their fleet prefixes", async () => {
@@ -226,6 +308,155 @@ describe("anvil serve mcp --fleet --http", () => {
     expect(isLoopbackHost("0.0.0.0")).toBe(false);
     expect(isLoopbackHost("::")).toBe(false);
     expect(isLoopbackHost("10.0.0.5")).toBe(false);
+  });
+
+  it("without inbound auth answers only a loopback Host on its own port, so a DNS-rebinding page gets nothing", async () => {
+    const handle = await start(twoBundleWorkspace());
+    const { port } = handle;
+    const foreign = [
+      "attacker.example",
+      `attacker.example:${port}`,
+      `127.0.0.1.attacker.example:${port}`,
+      `localhost.attacker.example:${port}`,
+      `127.0.0.1:${port + 1}`,
+      `localhost:${port + 1}`,
+      "127.0.0.1",
+      `0.0.0.0:${port}`,
+      `evil@127.0.0.1:${port}`,
+      `::1:${port}`,
+      `[127.0.0.1]:${port}`,
+      `[localhost]:${port}`,
+      "",
+      null,
+    ];
+    const routes: Array<["GET" | "POST", string, string | undefined]> = [
+      ["GET", "/healthz", undefined],
+      ["GET", "/readyz", undefined],
+      ["POST", "/mcp", INITIALIZE],
+      ["POST", "/call/billing/list_invoices", "{}"],
+    ];
+    for (const host of foreign) {
+      for (const [method, path, body] of routes) {
+        const label = `${host} ${method} ${path}`;
+        const reply = await rawExchange(port, method, path, host, body);
+        expect(reply.status, label).toBe(403);
+        expect(reply.headers, label).toContain("x-content-type-options: nosniff");
+        expect(reply.json, label).toMatchObject({ error: { code: "host_not_allowed" } });
+        // The refusal names nothing the page could read: no bundle, no tool.
+        expect(JSON.stringify(reply.json), label).not.toMatch(/billing|shipping/);
+      }
+    }
+    // The same requests under a loopback name and the bound port are served, so
+    // the 403s above came from the Host and nothing else.
+    for (const host of [
+      `127.0.0.1:${port}`,
+      `localhost:${port}`,
+      `LocalHost:${port}`,
+      `[::1]:${port}`,
+    ]) {
+      expect((await rawExchange(port, "GET", "/healthz", host)).status, host).toBe(200);
+      expect((await rawExchange(port, "GET", "/readyz", host)).status, host).toBe(503);
+      expect((await rawExchange(port, "POST", "/mcp", host, INITIALIZE)).status, host).toBe(200);
+    }
+  });
+
+  it("without inbound auth refuses a request whose Origin is not its own loopback origin", async () => {
+    const handle = await start(twoBundleWorkspace());
+    const { port } = handle;
+    const host = `127.0.0.1:${port}`;
+    const foreign = [
+      "https://attacker.example",
+      `http://attacker.example:${port}`,
+      `http://127.0.0.1:${port + 1}`,
+      `http://localhost:${port + 1}`,
+      `https://127.0.0.1:${port}`,
+      `http://127.0.0.1:${port}/`,
+      `http://127.0.0.1.attacker.example:${port}`,
+      "null",
+      "",
+    ];
+    const routes: Array<["GET" | "POST", string, string | undefined]> = [
+      ["GET", "/healthz", undefined],
+      ["GET", "/readyz", undefined],
+      ["POST", "/mcp", INITIALIZE],
+      ["POST", "/call/billing/list_invoices", "{}"],
+    ];
+    for (const origin of foreign) {
+      for (const [method, path, body] of routes) {
+        const label = `${origin} ${method} ${path}`;
+        const reply = await rawExchange(port, method, path, host, body, origin);
+        expect(reply.status, label).toBe(403);
+        expect(reply.headers, label).toContain("x-content-type-options: nosniff");
+        expect(reply.json, label).toMatchObject({ error: { code: "origin_not_allowed" } });
+        expect(JSON.stringify(reply.json), label).not.toMatch(/billing|shipping/);
+      }
+    }
+    // Its own loopback origin, under any loopback name, is served.
+    for (const origin of [
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`,
+      `http://LocalHost:${port}`,
+      `http://[::1]:${port}`,
+    ]) {
+      expect((await rawExchange(port, "GET", "/healthz", host, undefined, origin)).status).toBe(
+        200,
+      );
+      const init = await rawExchange(port, "POST", "/mcp", host, INITIALIZE, origin);
+      expect(init.status, origin).toBe(200);
+    }
+  });
+
+  it("leaves the Host unchecked once inbound auth is configured: the bearer token is the gate", async () => {
+    const handle = await start(twoBundleWorkspace(), {
+      ANVIL_INBOUND_AUTH_MODE: "oidc",
+      ANVIL_INBOUND_ISSUER: "https://issuer.example.com/",
+      ANVIL_INBOUND_AUDIENCE: "api://anvil-fleet",
+      ANVIL_INBOUND_RESOURCE: "https://fleet.example.com/mcp",
+      ANVIL_INBOUND_JWKS_URI: "https://issuer.example.com/jwks",
+    });
+    const host = "fleet.example.com";
+    expect((await rawExchange(handle.port, "GET", "/healthz", host)).status).toBe(200);
+    const anonymous = await rawExchange(handle.port, "POST", "/mcp", host, INITIALIZE);
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.headers).toContain("x-content-type-options: nosniff");
+    // Nor is the Origin checked: a browser page holds no token to send.
+    const origin = "https://app.example.com";
+    expect(
+      (await rawExchange(handle.port, "GET", "/healthz", host, undefined, origin)).status,
+    ).toBe(200);
+    expect((await rawExchange(handle.port, "POST", "/mcp", host, INITIALIZE, origin)).status).toBe(
+      401,
+    );
+  });
+
+  it("answers a request target the URL parser refuses with 400, and keeps serving", async () => {
+    // Node's parser admits `GET //` and `GET http://[`, and `new URL` throws on
+    // both: inside the async listener that was an unhandled rejection, and the
+    // process exited — ahead of the bearer check when inbound auth is on.
+    const open = await start(twoBundleWorkspace());
+    const authed = await start(twoBundleWorkspace(), {
+      ANVIL_INBOUND_AUTH_MODE: "oidc",
+      ANVIL_INBOUND_ISSUER: "https://issuer.example.com/",
+      ANVIL_INBOUND_AUDIENCE: "api://anvil-fleet",
+      ANVIL_INBOUND_RESOURCE: "https://fleet.example.com/mcp",
+      ANVIL_INBOUND_JWKS_URI: "https://issuer.example.com/jwks",
+    });
+    for (const handle of [open, authed]) {
+      const host = `127.0.0.1:${handle.port}`;
+      for (const target of ["//", "http://[", "http://:80/", "//[", "http://a:99999/"]) {
+        const label = `${handle === open ? "open" : "oidc"} ${target}`;
+        const reply = await rawExchange(handle.port, "GET", target, host);
+        expect(reply.status, label).toBe(400);
+        expect(reply.headers, label).toContain("x-content-type-options: nosniff");
+        expect(reply.json, label).toEqual({
+          error: { code: "bad_request", message: "Malformed request target." },
+        });
+      }
+      expect((await rawExchange(handle.port, "GET", "/healthz", host)).status).toBe(200);
+    }
+    // Without inbound auth the loopback gate still answers first.
+    const rebound = await rawExchange(open.port, "GET", "//", `attacker.example:${open.port}`);
+    expect(rebound.status).toBe(403);
   });
 
   it("refuses a workspace with no bundles and a cross-bundle collision before binding a port", async () => {

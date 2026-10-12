@@ -1314,3 +1314,94 @@ nav.sidebar .top-level > li > details > summary .group-label > span,
     padding: var(--ge-space-4);
   }
 }
+
+/* ── Astro 5 → 7 / Starlight 0.34 → 0.42 parity ──────────────────────────
+ * The upgrade changed a few rendering defaults. These rules keep the site
+ * looking as it did on Astro 5 + Starlight 0.34; each one restores the old
+ * result (Starlight changes: packages/starlight/CHANGELOG.md upstream).
+ * Delete a rule to adopt the newer upstream default instead. */
+
+/* Astro 7's Sätteri Markdown renderer writes GFM column alignment
+ * (`| ---: |`) as an inline `style` rather than an `align` attribute, so it
+ * now overrides the left-aligned header rule above. Header labels stay
+ * left-aligned as before; body cells keep their alignment. */
+.sl-markdown-content thead th[style*="text-align"] {
+  text-align: left !important;
+}
+
+/* 0.37: `overflow-wrap` went from `anywhere` to `break-word`. Without this,
+ * long inline code (operation ids, field names) stops wrapping inside table
+ * cells: tables widen and the playground result table overflows. Starlight
+ * set this in its lowest (reset) layer, so Expressive Code and Pagefind's own
+ * resets overrode it; this unlayered copy skips them to match. */
+:is(p, h1, h2, h3, h4, h5, h6, code):not(.expressive-code *, .pagefind-ui *) {
+  overflow-wrap: anywhere;
+}
+
+/* 0.39: in lists whose items hold paragraphs, a nested list that ends an
+ * item now gets the item's bottom margin. 0.34 left it at zero. */
+.sl-markdown-content li > :is(ul, ol):last-child:not(:where(.not-content *)) {
+  margin-bottom: 0;
+}
+
+/* 0.39: the sidebar now always reserves scrollbar space (`stable`), which
+ * narrows its contents by the scrollbar width. */
+.sidebar-pane {
+  scrollbar-gutter: auto;
+}
+
+/* 0.41.2: from 72rem up to ~82rem viewports the table of contents no longer
+ * shrinks below the sidebar width, so the content column gets narrower (by
+ * 20px at 1280px). 0.34's two-column split: */
+@media (min-width: 72rem) {
+  .right-sidebar-container {
+    width: calc(
+      var(--sl-sidebar-width) + (100% - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
+    );
+  }
+
+  [data-has-sidebar][data-has-toc] .main-pane {
+    width: calc(
+      var(--sl-content-width) + (100% - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
+    );
+  }
+}
+
+/* 0.38: the system font stack now leads with -apple-system/BlinkMacSystemFont.
+ * Body copy uses Hanken Grotesk (above); this stack still reaches the search
+ * dialog and the search shortcut hint. 0.34's value: */
+:root {
+  --sl-font-system:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/* 0.38: the theme picker label went from gray-1 (dimming on hover) to gray-2
+ * (brightening on hover). */
+starlight-theme-select label {
+  color: var(--sl-color-gray-1);
+}
+
+starlight-theme-select label:hover {
+  color: var(--sl-color-gray-2);
+}
+
+/* Starlight >= 0.42 opens and hides the mobile sidebar only through the Popover
+ * API (Chromium 114+, Safari 17+, Firefox 125+). Without it, the pane covers the
+ * page at phone widths and the toggle does nothing. Keep content readable there:
+ * hide the pane and its inert button, and show the pane again at the desktop
+ * breakpoint. If the breakpoint query is dropped (Safari < 16.4), the pane
+ * simply stays hidden. */
+@supports not selector(:popover-open) {
+  .sidebar-pane,
+  .sl-menu-button {
+    display: none;
+  }
+
+  @media (min-width: 50rem) {
+    .sidebar-pane {
+      display: block;
+    }
+  }
+}

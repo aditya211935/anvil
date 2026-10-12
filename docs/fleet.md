@@ -76,7 +76,23 @@ byte-identically to the same bundle served alone.
 
 The fleet starts a small HTTP listener (`ANVIL_FLEET_READYZ_PORT`, default
 `8787`) serving `/readyz`, which lists every mounted bundle's own certified
-state:
+state. It stays up for the whole MCP session and closes when the session ends
+(stdin closes, after requests already read are answered, or the process gets
+`SIGTERM` or `SIGINT`). If it cannot bind,
+because another fleet already holds the port or the host does not have the
+address, it prints one line to stderr and the MCP session keeps running
+without it.
+
+The listener has no auth, so it binds `127.0.0.1` only, and like the HTTP
+fleet below it answers only requests whose `Host` names a loopback address
+with its own port (anything else is a `403`), so a DNS-rebinding page cannot
+read it; a port forward must keep the same local port number. A container
+whose probe comes from outside the loopback sets `ANVIL_FLEET_READYZ_HOST` to
+an IP literal to bind instead: `::` binds every interface for IPv4 and IPv6
+where IPv6 is available (otherwise use `0.0.0.0`), `0.0.0.0` every IPv4
+interface only. On a
+non-loopback address the `Host` check is off, since a probe may use any name.
+A hostname or any other unusable value keeps the loopback default. The body:
 
 ```json
 {
@@ -135,12 +151,35 @@ the port is bound.
 
 Binding is loopback (`127.0.0.1`) unless `--host` names an interface, and a
 non-loopback bind with `ANVIL_INBOUND_AUTH_MODE` unset is refused outright:
-it would hand every mounted tool to the network with no gate at all. Over
-HTTP the session principal is the caller's bearer token looked up in
-`ANVIL_PRINCIPALS` (the rule below); a configured directory plus an unlisted
-token is refused `policy/principal_unresolved` by `execute()`, never
-promoted to anonymous, the same fail-closed rule stdio's `ANVIL_PRINCIPAL`
-follows.
+it would hand every mounted tool to the network with no gate at all. The
+fleet speaks plain HTTP, so a non-loopback `--host` needs a TLS-terminating
+proxy in front of it. Over HTTP the session principal is the caller's bearer
+token looked up in `ANVIL_PRINCIPALS` (the rule below); a configured directory
+plus an unlisted token is refused `policy/principal_unresolved` by
+`execute()`, never promoted to anonymous, the same fail-closed rule stdio's
+`ANVIL_PRINCIPAL` follows.
+
+With inbound auth unset, loopback is the only gate, and a web page can get
+around that by re-pointing its own domain at `127.0.0.1` (DNS rebinding). So an
+unauthenticated listener answers only requests whose `Host` header names a
+loopback address (`127.0.0.1`, `localhost`, `[::1]`) with the port it is
+listening on, on every route; anything else is a `403` `host_not_allowed`.
+Reaching it through a port forward on a different local port is refused for
+the same reason, so forward to the same local port number
+(`ssh -L 8788:127.0.0.1:8788`); only `runtime/server.js` and
+`mcp/server-sse.js` accept a loopback `Host` on another port. A request whose
+`Origin` header (a browser sends one) is not the listener's own loopback origin (`http://127.0.0.1:<port>`,
+`http://localhost:<port>`, `http://[::1]:<port>`) is a `403`
+`origin_not_allowed`, as the MCP Streamable HTTP transport requires; MCP
+clients outside a browser send no `Origin`. With inbound auth configured both
+checks are off, since the bearer token is the gate.
+
+A request target Node's HTTP parser accepts but the URL parser refuses (`GET //`,
+`GET http://[`) is a `400` `bad_request`, answered after the loopback checks and
+before the bearer check. A failure no route handles is a `500` `internal_error`
+(one fixed line on stderr, never the error's text), or a closed connection once
+a response has started. Either way the listener keeps serving; the deployed
+`runtime/server.js` and `mcp/server-sse.js` answer both cases the same way.
 
 ### As a Branchyard gateway
 

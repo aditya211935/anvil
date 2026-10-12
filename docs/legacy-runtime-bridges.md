@@ -274,6 +274,14 @@ and it is gated so that nothing short of the full chain above can reach it:
   beside the runtime as its protocol facade (`--protocol-facade` /
   `ANVIL_PROTOCOL_FACADE`). It binds `127.0.0.1`; a non-loopback `--host` is
   served only when given explicitly, with a warning on stderr.
+- **No browser can drive it.** A request carrying an `Origin` header is
+  refused with `403 permission_denied`, because browsers send one with every
+  POST and the runtime never does. On a loopback address, a `Host` that is not
+  a loopback name with the bridge's own port is refused the same way, so a
+  page whose domain has been re-pointed at your machine (DNS rebinding) cannot
+  reach it. A port forward to a different local port (`ssh -L`,
+  `kubectl port-forward`) is refused for the same reason, so forward to the
+  same local port number.
 - **One process, one binding, one broker session.** `--json` prints one
   `{ url, port, host, operation, bindingId, broker }` document and keeps
   serving `POST /invoke` and `GET /readyz` until SIGTERM or SIGINT, then

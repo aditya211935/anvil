@@ -33,7 +33,7 @@ import {
   verifyLegacyCollectionPlan,
 } from "./index.js";
 
-const sha = (digit: string) => `sha256:${digit.repeat(64)}` as const;
+const sha256Digest = (digit: string) => `sha256:${digit.repeat(64)}` as const;
 
 interface ResultOptions {
   artifactDigit?: string;
@@ -49,7 +49,7 @@ function inventoryResult(options: ResultOptions = {}): LegacyInventoryResult {
   const artifactDigit = options.artifactDigit ?? "a";
   const artifact = createLegacyArtifact({
     schemaVersion: 1,
-    digest: sha(artifactDigit),
+    digest: sha256Digest(artifactDigit),
     bytes: 128,
     mediaType: "application/xml",
     role: "runtime_configuration",
@@ -92,7 +92,7 @@ function inventoryResult(options: ResultOptions = {}): LegacyInventoryResult {
       application: "payments",
       module: "refunds",
       component: "RefundListener",
-      deploymentDigest: sha(options.deploymentDigit ?? "b"),
+      deploymentDigest: sha256Digest(options.deploymentDigit ?? "b"),
     },
     invocation: {
       kind: "message",
@@ -197,7 +197,7 @@ describe("legacy collection plan", () => {
       }),
     ).toThrow();
     const plan = createLegacyCollectionPlan(base);
-    expect(() => LegacyCollectionPlan.parse({ ...plan, contentHash: sha("f") })).toThrow(
+    expect(() => LegacyCollectionPlan.parse({ ...plan, contentHash: sha256Digest("f") })).toThrow(
       /match plan content/,
     );
   });
@@ -369,7 +369,7 @@ describe("CollectorV2 contract", () => {
   const member = createLegacyCollectorMemberMetadataV2({
     sourceId: "mq-export",
     path: "exports/topology.mqsc",
-    digest: sha("a"),
+    digest: sha256Digest("a"),
     bytes: 128,
     role: "broker_export",
     sourceKind: "broker_configuration",
@@ -419,7 +419,7 @@ describe("CollectorV2 contract", () => {
         application: "payments",
         module: "refunds",
         component: "RefundListener",
-        deploymentDigest: sha("a"),
+        deploymentDigest: sha256Digest("a"),
       },
       invocation: {
         kind: "message" as const,
@@ -439,7 +439,9 @@ describe("CollectorV2 contract", () => {
     };
     const fact = createLegacyCollectorFactV2(input);
     expect(createLegacyCollectorFactV2(input)).toEqual(fact);
-    expect(() => LegacyCollectorFactV2.parse({ ...fact, contentHash: sha("f") })).toThrow();
+    expect(() =>
+      LegacyCollectorFactV2.parse({ ...fact, contentHash: sha256Digest("f") }),
+    ).toThrow();
     const firstClaim = input.claims[0];
     if (!firstClaim) throw new Error("fixture did not produce a claim");
     expect(() =>
