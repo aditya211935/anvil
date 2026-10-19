@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@anvil/air": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "tsup": "^8.5.0",

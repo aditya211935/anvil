@@ -45,7 +45,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^14.0.3",
     "yaml": "^2.8.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "fflate": "^0.8.3",

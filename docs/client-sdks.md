@@ -108,7 +108,7 @@ dependency in any of the four:
 | TypeScript | `node:https` (a `FetchLike` presenting a client certificate; the platform `fetch` has no injectable dispatcher, so this is the one scheme that does not use it) |
 | Python | `ssl.SSLContext.load_cert_chain` behind a `urllib` opener (PEM read from the env, or a file path; a literal PEM value is written once to a private, mode-`0600` temp file, because `load_cert_chain` only accepts file paths) |
 | Go | `tls.Config{Certificates: […]}` from `tls.X509KeyPair`, `RootCAs` from the declared CA — an `*http.Client` a caller can also build and inject with `WithHTTPClient` |
-| Java | An `SSLContext` built from PEM using only `java.security` / `javax.net.ssl` — **the private key must be PKCS#8** (`-----BEGIN PRIVATE KEY-----`); convert a traditional PKCS#1 RSA key first: `openssl pkcs8 -topk8 -nocrypt -in key.pem -out key-pkcs8.pem` |
+| Java | An `SSLContext` built from PEM using only `java.security` / `javax.net.ssl` — **the private key must be PKCS#8** (PEM label `PRIVATE KEY`); convert a traditional PKCS#1 RSA key (label `RSA PRIVATE KEY`) first: `openssl pkcs8 -topk8 -nocrypt -in key.pem -out key-pkcs8.pem` |
 
 ```go
 client, err := payments.New() // reads PAYMENTS_MTLS_CLIENT_CERT / _CLIENT_KEY / _CA

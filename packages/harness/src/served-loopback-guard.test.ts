@@ -371,7 +371,9 @@ describe("deploy/runtime/server.js with inbound OIDC", () => {
         expectUnauthorized(reply, label);
         expect(reply.headers["x-injected"], label).toBeUndefined();
         // Refused on the algorithm, not after a key fetch to jwks.invalid.
-        expect(JSON.parse(reply.body).error.message, label).toMatch(/^Unsupported JWT alg "/);
+        expect(JSON.parse(reply.body).error.message, label).toBe(
+          "Unsupported JWT alg (expected RS256 or ES256).",
+        );
       }
     }
     const health = await exchange(port, "/healthz", { host: `127.0.0.1:${port}` });

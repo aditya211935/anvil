@@ -355,6 +355,43 @@ operations:
     }
   });
 
+  it("refuses a private_key_jwt client before opening the redirect listener or touching the network", async () => {
+    const { dir, air } = await compiledBundle(`
+operations:
+  createRefund:
+    auth:
+      type: oauth2_authorization_code
+      credential_profile: end_user_flow
+      provider:
+        authorization_endpoint: https://idp.example.com/authorize
+        token_endpoint: https://idp.example.com/token
+        client_auth: private_key_jwt
+`);
+    const op = air.operations.find((o) => o.canonicalName === "create_refund") ?? air.operations[0];
+    if (!op) throw new Error("fixture: no operation compiled");
+    const prefix = envPrefix(credentialProfileName("test", op.auth));
+    process.env[`${prefix}_CLIENT_ID`] = "client-1";
+    process.env[`${prefix}_CLIENT_SECRET`] = "shh";
+    cleanupEnv.push(`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const io = watchedIO(() => {
+        throw new Error("must not print an authorize URL for a private_key_jwt client");
+      });
+      const code = await runAuthLogin(
+        dir,
+        { profile: "test", timeoutSeconds: "1" },
+        io,
+        freshDir(),
+      );
+      expect(code).toBe(1);
+      expect(io.stderr.join(" ")).toContain("private_key_jwt");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("refuses a plain-http authorization endpoint before reading the client id, listening, or touching the network", async () => {
     const { dir } = await compiledBundle(`
 operations:

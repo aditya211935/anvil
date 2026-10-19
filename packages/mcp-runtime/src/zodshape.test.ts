@@ -153,4 +153,43 @@ describe("operationZodShape", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("pins how the installed zod reads source formats and constraints", () => {
+    // These are what a served tool accepts, and they move with zod releases: 4.6
+    // began requiring an offset on time and seconds on date-time, and enforcing
+    // hostname, uniqueItems, minProperties and code-point lengths. A failure here
+    // after a zod bump is a behaviour change to review, not a test to update blindly.
+    const operation = keyedOperation();
+    operation.input.schema = {
+      type: "object",
+      properties: {
+        time: { type: "string", format: "time" },
+        stamp: { type: "string", format: "date-time" },
+        host: { type: "string", format: "hostname" },
+        tags: { type: "array", uniqueItems: true },
+        attrs: { type: "object", minProperties: 1 },
+        code: { type: "string", minLength: 2 },
+        note: { type: ["string", "null"] },
+      },
+    };
+    const shape = operationZodShape(operation);
+    const accepts = (field: string, value: unknown) =>
+      z.object(shape).safeParse({ [field]: value }).success;
+    expect(accepts("time", "10:00:00Z")).toBe(true);
+    expect(accepts("time", "10:00:00+05:30")).toBe(true);
+    expect(accepts("time", "10:00:00")).toBe(false);
+    expect(accepts("stamp", "2026-01-01T10:00:00+05:30")).toBe(true);
+    expect(accepts("stamp", "2026-01-01T10:00Z")).toBe(false);
+    expect(accepts("stamp", "2026-01-01T10:00:00")).toBe(false);
+    expect(accepts("host", "a_b.example.com")).toBe(false);
+    expect(accepts("tags", [1, 1])).toBe(false);
+    expect(accepts("attrs", {})).toBe(false);
+    expect(accepts("code", "\u{1F600}")).toBe(false);
+    expect(accepts("note", null)).toBe(true);
+    // The published inputSchema spells a nullable primitive as a type array.
+    const published = z.toJSONSchema(z.object(shape)) as {
+      properties: Record<string, unknown>;
+    };
+    expect(published.properties.note).toMatchObject({ type: ["string", "null"] });
+  });
 });

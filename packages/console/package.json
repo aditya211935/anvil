@@ -33,7 +33,7 @@
     "@anvil/generators": "workspace:*",
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
-    "zod": "^4.4.3",
+    "zod": "^4.6.7",
     "@anvil/harness": "workspace:*"
   },
   "devDependencies": {
@@ -49,7 +49,7 @@
     "react-dom": "19.2.8",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
-    "vite": "8.2.2",
+    "vite": "8.3.4",
     "vitest": "^4.1.11"
   }
 }

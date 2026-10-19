@@ -153,6 +153,7 @@ describe("verifyInboundToken", () => {
     if (!r.ok) {
       expect(r.status).toBe(403);
       expect(r.error).toBe("insufficient_scope");
+      expect(r.description).toBe("Token lacks a scope this connector requires.");
     }
   });
 
@@ -170,26 +171,24 @@ describe("verifyInboundToken", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("never echoes a hostile alg verbatim into the body or the WWW-Authenticate header", async () => {
-    // The alg comes from the caller's unverified JWT header. A CR/LF or non-Latin-1
-    // character in a header value makes `writeHead` throw (ERR_INVALID_CHAR), and
-    // the request handler does not catch that. A quote or sheer length would not
-    // throw, but is still kept out of the echo.
-    const cases: Array<[alg: string, shown: string]> = [
-      ['HS256"\r\nX-Evil: 1', "HS256???X-Evil??1"],
-      ["<script>\u20ac</script>", "?script????script?"],
-      ["A".repeat(10_000), "A".repeat(32)],
-      // A real alg name is reported as-is, so the refusal stays diagnosable.
-      ["HS256", "HS256"],
-    ];
-    for (const [alg, shown] of cases) {
+  it("never echoes the caller's alg into the body or the WWW-Authenticate header", async () => {
+    // The alg comes from the caller's unverified JWT header. The refusal names only
+    // the accepted algorithms, so no part of it (CR/LF, markup, sheer length, or a
+    // plain alg name) is reflected, and the header value always stays valid.
+    for (const alg of [
+      'HS256"\r\nX-Evil: 1',
+      "<script>\u20ac</script>",
+      "A".repeat(10_000),
+      "HS256",
+    ]) {
       const r = await verifyInboundToken(`Bearer ${sign(goodClaims, { alg })}`, base, {
         now: NOW,
         fetchJwks,
       });
       if (r.ok) throw new Error("an unsupported alg must be refused");
       expect(r.status).toBe(401);
-      expect(r.description).toBe(`Unsupported JWT alg "${shown}" (expected RS256 or ES256).`);
+      expect(r.description).toBe("Unsupported JWT alg (expected RS256 or ES256).");
+      expect(r.wwwAuthenticate).not.toContain(alg);
       expect(() => validateHeaderValue("www-authenticate", r.wwwAuthenticate)).not.toThrow();
     }
   });

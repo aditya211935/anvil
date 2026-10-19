@@ -2228,6 +2228,76 @@
       "tests": [
         "packages/cli/src/commands/auth.test.ts"
       ]
+    },
+    {
+      "id": "inbound-auth/refusal-never-echoes-alg",
+      "file": "packages/mcp-runtime/src/inbound-auth.ts",
+      "control": "An unsupported-alg refusal names only the accepted algorithms. Put the caller's alg back into the text and request-controlled bytes reach the JSON body and the WWW-Authenticate header again.",
+      "find": "        : \"Unsupported JWT alg (expected RS256 or ES256).\",",
+      "replace": "        : `Unsupported JWT alg \"${String(header.alg)}\" (expected RS256 or ES256).`,",
+      "tests": [
+        "packages/mcp-runtime/src/inbound-auth.test.ts"
+      ]
+    },
+    {
+      "id": "har/unparseable-url-warning-hides-query",
+      "file": "packages/compiler/src/protocols/har.ts",
+      "control": "A HAR entry whose request.url will not parse is reported with the URL cut at its query and stripped of userinfo, up to the last \"@\" of the authority. Drop the strip and a user:pass carried in that URL is written into the compiled AIR's diagnostics.",
+      "find": "        .replace(/^((?:[^/?#]*:)?\\/\\/)?[^/?#]*@/, \"$1\")\n",
+      "replace": "",
+      "tests": [
+        "packages/compiler/src/protocols/har.test.ts"
+      ]
+    },
+    {
+      "id": "har/opaque-origin-is-not-a-server",
+      "file": "packages/compiler/src/protocols/har.ts",
+      "control": "A HAR request.url with an opaque origin (data:, blob:, or user:pass@host/... read as scheme \"user\") is skipped with a warning. Lower it and the server is the string \"null\" and the whole rest of the URL, credential included, becomes an operation path.",
+      "find": "    if (u && u.origin !== \"null\") {",
+      "replace": "    if (u) {",
+      "tests": [
+        "packages/compiler/src/protocols/har.test.ts"
+      ]
+    },
+    {
+      "id": "postman/no-userinfo-in-servers",
+      "file": "packages/compiler/src/protocols/postman.ts",
+      "control": "A Postman request URL or host variable written as https://user:pass@host is lowered to scheme, host and port only, stripping to the last \"@\" of the authority. Drop the strip and the username and password are copied into the lowered document's servers list and from there into AIR.",
+      "find": "  base = base.replace(/^((?:[^/?#]*:)?\\/\\/)?[^/?#]*@/, \"$1\");",
+      "replace": "  base = `${base}`;",
+      "tests": [
+        "packages/compiler/src/protocols/postman.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "postman/oauth2-urls-carry-no-credentials",
+      "file": "packages/compiler/src/protocols/postman.ts",
+      "control": "An oauth2 authUrl or accessTokenUrl is lowered without userinfo or a query value whose name marks it as a credential. Copy the query verbatim and that credential is written into the lowered security scheme and from there into AIR's token endpoint.",
+      "find": "  const kept = [...url.searchParams].filter(([k]) => !CREDENTIAL_QUERY_NAME.test(k));",
+      "replace": "  const kept = [...url.searchParams];",
+      "tests": [
+        "packages/compiler/src/protocols/postman.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "wsdl/xsd-time-offset-optional",
+      "file": "packages/compiler/src/protocols/wsdl.ts",
+      "control": "xsd:time lowers to a pattern whose timezone is optional, as XSD defines it. Lower it to format: time and the served tool refuses \"10:00:00\", a valid XSD time, because JSON Schema's time format requires an offset.",
+      "find": "  time: { type: \"string\", pattern: \"^\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d+)?(Z|[+-]\\\\d{2}:\\\\d{2})?$\" },",
+      "replace": "  time: { type: \"string\", format: \"time\" },",
+      "tests": [
+        "packages/compiler/src/protocols/wsdl-choice.test.ts"
+      ]
+    },
+    {
+      "id": "mock/control-routes-refuse-browsers",
+      "file": "packages/generators/src/mock.ts",
+      "control": "The generated mock's /__anvil/ control routes refuse a request carrying an Origin header and, on a loopback bind, a non-loopback Host. Drop the check and a web page can reset the mock or change its scenarios with a plain-text POST, and a DNS-rebinding page can read its captures.",
+      "find": "      const refusal = controlRefusal(req);",
+      "replace": "      const refusal = undefined;",
+      "tests": [
+        "packages/generators/src/mock-server.test.ts"
+      ]
     }
   ]
 }

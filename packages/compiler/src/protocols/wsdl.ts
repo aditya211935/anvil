@@ -56,7 +56,9 @@ const XSD_SCALARS: Record<string, JsonSchemaLike> = {
   unsignedShort: { type: "integer", minimum: 0 },
   date: { type: "string", format: "date" },
   dateTime: { type: "string", format: "date-time" },
-  time: { type: "string", format: "time" },
+  // xsd:time takes an optional timezone. JSON Schema's `format: "time"` is RFC 3339
+  // full-time, which requires one, so "10:00:00" (valid XSD) would be refused.
+  time: { type: "string", pattern: "^\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})?$" },
   duration: { type: "string" },
   base64Binary: { type: "string", format: "byte" },
   hexBinary: { type: "string" },

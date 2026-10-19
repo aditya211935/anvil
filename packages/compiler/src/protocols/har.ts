@@ -292,16 +292,41 @@ function parseEntries(entries: HarEntry[], diagnostics: Diagnostic[] | undefined
       });
       return;
     }
-    try {
-      const u = new URL(raw);
-      const segments = u.pathname.split("/").filter((s) => s !== "");
-      parsed.push({ entry, method, origin: u.origin, segments });
-    } catch {
+    if (typeof raw !== "string") {
       diagnostics?.push({
         level: "warning",
         code: "har_entry_unparseable_url",
         path: `entries[${index}]`,
-        message: `HAR entry's request.url is not a parseable absolute URL: ${JSON.stringify(raw)}. Skipped.`,
+        message: "HAR entry's request.url is not a string; skipped.",
+      });
+      return;
+    }
+    let u: URL | undefined;
+    try {
+      u = new URL(raw);
+    } catch {
+      u = undefined;
+    }
+    // An opaque origin (`data:`, `blob:`, or `user:pass@host/...`, which parses with
+    // "user" as its scheme) has no server to lower against; its "path" would be the
+    // whole rest of the string, credential included.
+    if (u && u.origin !== "null") {
+      const segments = u.pathname.split("/").filter((s) => s !== "");
+      parsed.push({ entry, method, origin: u.origin, segments });
+    } else {
+      // The scrub above cleans the queryString array, not this raw string, and the
+      // warning is kept in the compiled AIR: show the URL only up to its query, with
+      // any userinfo removed, so a credential carried in the URL never lands there.
+      // Userinfo runs to the last "@" before the first "/", "?" or "#" (it may itself
+      // contain "@"), with or without a scheme in front.
+      const shown = (raw.split(/[?#]/)[0] ?? "")
+        .replace(/^((?:[^/?#]*:)?\/\/)?[^/?#]*@/, "$1")
+        .slice(0, 200);
+      diagnostics?.push({
+        level: "warning",
+        code: "har_entry_unparseable_url",
+        path: `entries[${index}]`,
+        message: `HAR entry's request.url is not a parseable absolute URL: ${JSON.stringify(shown)}. Skipped.`,
       });
     }
   });

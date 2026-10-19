@@ -818,11 +818,10 @@ function redactedMcpTarget(target: string): string {
   const raw = legacySse ? target.slice(4) : target;
   try {
     const url = new URL(raw);
-    url.username = "";
-    url.password = "";
-    if (url.search) url.search = "?redacted";
-    url.hash = "";
-    return `${legacySse ? "sse:" : ""}${url.toString()}`;
+    // Built from scheme, host and path only: userinfo, query values and the
+    // fragment are never copied in, so nothing has to be blanked out afterwards.
+    const shown = `${url.protocol}//${url.host}${url.pathname}${url.search ? "?redacted" : ""}`;
+    return `${legacySse ? "sse:" : ""}${shown}`;
   } catch {
     return "<invalid-mcp-target>";
   }

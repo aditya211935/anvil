@@ -361,6 +361,59 @@ describe("HAR adapter: servers and operationId", () => {
     expect(diagnostics.some((d) => d.code === "har_entry_unparseable_url")).toBe(true);
     expect(Object.keys(doc.paths ?? {})).toEqual([]);
   });
+
+  it("keeps query values and userinfo of an unparseable request.url out of the warning", () => {
+    // A relative URL never reaches new URL(), so the queryString scrub has not
+    // touched its raw text; the warning is persisted into the compiled AIR.
+    const diagnostics: Diagnostic[] = [];
+    adaptHar(
+      har([
+        entry({ url: "/v1/orders?api_key=SUPER_SECRET_RELATIVE&page=2" }),
+        entry({ url: "https://alice:SUPER_SECRET_USERINFO@api.example.com:99999/v1?token=x" }),
+      ]),
+      undefined,
+      diagnostics,
+    );
+    const warnings = diagnostics.filter((d) => d.code === "har_entry_unparseable_url");
+    expect(warnings).toHaveLength(2);
+    expect(JSON.stringify(warnings)).not.toContain("SUPER_SECRET");
+    expect(warnings[0]?.message).toContain('"/v1/orders"');
+  });
+
+  it("strips userinfo up to the last @ of the authority, with or without a scheme", () => {
+    const diagnostics: Diagnostic[] = [];
+    adaptHar(
+      har([
+        entry({ url: "https://alice@corp.example:p@SUPER_SECRET_AT@api.example.com:99999/v1" }),
+        entry({ url: "bob:SUPER_SECRET_NOSCHEME@api.example.com/v1/a@b" }),
+      ]),
+      undefined,
+      diagnostics,
+    );
+    const messages = diagnostics
+      .filter((d) => d.code === "har_entry_unparseable_url")
+      .map((d) => d.message);
+    expect(JSON.stringify(messages)).not.toContain("SUPER_SECRET");
+    expect(messages[0]).toContain('"https://api.example.com:99999/v1"');
+    // An "@" after the authority is part of the path, not userinfo.
+    expect(messages[1]).toContain('"api.example.com/v1/a@b"');
+  });
+
+  it("skips an entry whose request.url is not a string, with a warning instead of a crash", () => {
+    const diagnostics: Diagnostic[] = [];
+    const doc = adaptHar(
+      har([
+        entry({ url: 42 as unknown as string }),
+        entry({ url: { raw: "https://x:SUPER_SECRET@h" } as unknown as string }),
+      ]),
+      undefined,
+      diagnostics,
+    );
+    const warnings = diagnostics.filter((d) => d.code === "har_entry_unparseable_url");
+    expect(warnings.map((d) => d.path)).toEqual(["entries[0]", "entries[1]"]);
+    expect(JSON.stringify(diagnostics)).not.toContain("SUPER_SECRET");
+    expect(Object.keys(doc.paths ?? {})).toEqual([]);
+  });
 });
 
 describe("HAR compile posture: never generated, never approved", () => {

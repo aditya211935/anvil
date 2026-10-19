@@ -458,6 +458,26 @@ function authParam(auth: PostmanAuth, key: string): string | undefined {
   return undefined;
 }
 
+/** Query names that mark a value as a credential; the same rule as the HAR importer. */
+const CREDENTIAL_QUERY_NAME = /token|secret|key|password|session/i;
+
+/**
+ * An oauth2 URL as the lowered document may carry it: no userinfo and no query value
+ * whose name marks it as a credential. Other query parameters, such as Azure B2C's
+ * `?p=` policy, are configuration and stay. A templated URL keeps what precedes its query.
+ */
+function credentialFreeAuthUrl(raw: string | undefined): string | undefined {
+  if (raw === undefined || !URL.canParse(raw)) {
+    return raw?.split(/[?#]/)[0]?.replace(/^((?:[^/?#]*:)?\/\/)?[^/?#]*@/, "$1");
+  }
+  const url = new URL(raw);
+  const kept = [...url.searchParams].filter(([k]) => !CREDENTIAL_QUERY_NAME.test(k));
+  const userinfo = /^[^/?#]*\/\/[^/?#]*@/.test(raw);
+  if (!userinfo && kept.length === url.searchParams.size) return raw;
+  const query = new URLSearchParams(kept).toString();
+  return `${url.protocol}//${url.host}${url.pathname}${query ? `?${query}` : ""}`;
+}
+
 /** Stable scheme name per auth type; one scheme serves every use of the type. */
 const SCHEME_NAMES: Record<string, string> = {
   bearer: "bearerAuth",
@@ -494,8 +514,12 @@ function toSecurityScheme(auth: PostmanAuth): Record<string, unknown> | undefine
         type: "oauth2",
         flows: {
           authorizationCode: {
-            authorizationUrl: authParam(auth, "authUrl") ?? "https://example.invalid/authorize",
-            tokenUrl: authParam(auth, "accessTokenUrl") ?? "https://example.invalid/token",
+            authorizationUrl:
+              credentialFreeAuthUrl(authParam(auth, "authUrl")) ??
+              "https://example.invalid/authorize",
+            tokenUrl:
+              credentialFreeAuthUrl(authParam(auth, "accessTokenUrl")) ??
+              "https://example.invalid/token",
             scopes,
           },
         },
@@ -605,6 +629,11 @@ function lowerUrl(url: PostmanUrl | string, variables: Map<string, string>): Low
   } else {
     base = `${protocol}://${hostRaw}${port}`;
   }
+  // Userinfo in a request URL or a host variable is a credential. It runs to the last
+  // "@" before the first "/", "?" or "#" (the userinfo may itself contain "@"); an "@"
+  // after that is not userinfo and must not move the host. The lowered document keeps
+  // scheme, host and port only.
+  base = base.replace(/^((?:[^/?#]*:)?\/\/)?[^/?#]*@/, "$1");
 
   const segments = Array.isArray(structured.path)
     ? structured.path.map((s) => (typeof s === "string" ? s : (s.value ?? "")))
