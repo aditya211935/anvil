@@ -311,8 +311,8 @@ async function exchangeCode(
     body.set("client_id", clientId);
     body.set("client_secret", clientSecret);
   } else if (clientSecret) {
-    // Default client_secret_basic. private_key_jwt is not supported by this
-    // interactive broker — only the two client-secret methods are.
+    // Default: HTTP Basic with the client id (RFC 6749 section 2.3.1). private_key_jwt
+    // never gets here: login refuses it before the browser opens.
     headers.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
   } else {
     body.set("client_id", clientId);
@@ -384,6 +384,15 @@ export async function runAuthLogin(
   );
   if (signInRefusal) {
     io.err(signInRefusal);
+    return 1;
+  }
+  // The exchange below supports only the two shared-key client methods (HTTP Basic or
+  // form fields). Refuse a private_key_jwt client up front, as the runtime's refresh
+  // does, rather than send the provider an authentication it was told not to expect.
+  if (provider.clientAuth === "private_key_jwt") {
+    io.err(
+      `Operation "${op.id}" declares private_key_jwt client authentication, which anvil auth login does not support (it can only use client_secret_basic or client_secret_post).`,
+    );
     return 1;
   }
 

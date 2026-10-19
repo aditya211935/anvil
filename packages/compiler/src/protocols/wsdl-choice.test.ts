@@ -317,6 +317,52 @@ describe("a choice nested inside a sequence branch keeps its own rule", () => {
   });
 });
 
+describe("XSD time types at the served surface", () => {
+  it("accepts an xsd:time with or without a timezone, as XSD allows", async () => {
+    const air = await compile({
+      spec: wsdl(`${RESPONSE}<xsd:element name="PayRequest"><xsd:complexType><xsd:sequence>
+  <xsd:element name="at" type="xsd:time"/>
+</xsd:sequence></xsd:complexType></xsd:element>`),
+      serviceId: "payments",
+      sourceUri: "pay.wsdl",
+    });
+    const pay = air.operations.find((o) => o.sourceRef.operationId === "Pay");
+    const validator = z.fromJSONSchema(
+      materializeSchemaBranches(pay?.input.body?.schema as JsonSchema) as Parameters<
+        typeof z.fromJSONSchema
+      >[0],
+    );
+    const accepts = (at: string) => validator.safeParse({ at }).success;
+    for (const at of [
+      "10:00:00",
+      "10:00:00.5",
+      "10:00:00Z",
+      "10:00:00+05:30",
+      "23:59:59-14:00",
+      "24:00:00",
+      "00:00:00+14:00",
+    ]) {
+      expect(accepts(at)).toBe(true);
+    }
+    // XSD's ranges still hold: hours, minutes, seconds and offsets out of range fail.
+    for (const at of [
+      "10:00",
+      "10:00:00 PM",
+      "2026-01-01T10:00:00Z",
+      "99:99:99Z",
+      "12:60:00Z",
+      "12:00:60",
+      "24:01:00Z",
+      "24:00:00.5",
+      "10:00:00+99:99",
+      "10:00:00+14:30",
+      "10:00:00+05:60",
+    ]) {
+      expect(accepts(at)).toBe(false);
+    }
+  });
+});
+
 describe("through the whole compiler", () => {
   it("carries the oneOf into the operation's body and surfaces the diagnostic", async () => {
     const spec = wsdl(`

@@ -927,6 +927,64 @@ describe("auth blocks", () => {
     });
   });
 
+  it("keeps credentials in oauth2 urls out of the lowered scheme, and their configuration in", () => {
+    const flowOf = (authUrl: string, accessTokenUrl: string) => {
+      const doc = adaptPostman(
+        withAuth({
+          type: "oauth2",
+          oauth2: [
+            { key: "authUrl", value: authUrl },
+            { key: "accessTokenUrl", value: accessTokenUrl },
+          ],
+        }),
+      );
+      expect(JSON.stringify(doc)).not.toContain("SUPER_SECRET");
+      const schemes = doc.components?.securitySchemes as Record<
+        string,
+        { flows: { authorizationCode: Record<string, unknown> } }
+      >;
+      return schemes.oauth2Auth!.flows.authorizationCode;
+    };
+    expect(
+      flowOf(
+        "https://u:SUPER_SECRET_UI@auth.example.com/authorize?audience=api",
+        "https://auth.example.com/token?p=b2c_1_signin&client_secret=SUPER_SECRET_Q",
+      ),
+    ).toMatchObject({
+      authorizationUrl: "https://auth.example.com/authorize?audience=api",
+      tokenUrl: "https://auth.example.com/token?p=b2c_1_signin",
+    });
+    expect(
+      flowOf("{{auth_base}}/authorize?api_key=SUPER_SECRET_T", "{{auth_base}}/token"),
+    ).toMatchObject({
+      authorizationUrl: "{{auth_base}}/authorize",
+      tokenUrl: "{{auth_base}}/token",
+    });
+    // Spellings the URL parser accepts with userinfo, though not written with "//".
+    for (const slashes of ["/", "", "///", "\\"]) {
+      expect(
+        flowOf(
+          `https:${slashes}alice:SUPER_SECRET_SLASH@auth.example.com/authorize`,
+          `https:${slashes}alice:SUPER_SECRET_SLASH@auth.example.com/token`,
+        ),
+      ).toMatchObject({
+        authorizationUrl: "https://auth.example.com/authorize",
+        tokenUrl: "https://auth.example.com/token",
+      });
+    }
+    // A templated URL that may carry userinfo, or a parsed one that keeps an "@" in its
+    // path, is refused rather than guessed at: the placeholder stands in.
+    expect(
+      flowOf(
+        "{{scheme}}:/alice:SUPER_SECRET_T@{{host}}/authorize",
+        "https://https:/a:SUPER_SECRET_P@h/t",
+      ),
+    ).toMatchObject({
+      authorizationUrl: "https://example.invalid/authorize",
+      tokenUrl: "https://example.invalid/token",
+    });
+  });
+
   it("falls back to non-routable placeholder oauth2 urls and an empty scope map when undeclared", () => {
     const doc = adaptPostman(withAuth({ type: "oauth2" }));
     const schemes = doc.components?.securitySchemes as Record<
@@ -1409,5 +1467,89 @@ describe("requests that collide on one endpoint", () => {
     });
     adaptPostman(collection, diagnostics);
     expect(diagnostics).toEqual([]);
+  });
+});
+
+/* --------------------------- credentials in request URLs -------------------------- */
+
+describe("credentials written into a request URL", () => {
+  it("never copies URL userinfo into the lowered servers list", () => {
+    const collection = (url: unknown, variable: unknown[] = []) =>
+      JSON.stringify({
+        info: { name: "creds", schema: SCHEMA_V21 },
+        variable,
+        item: [{ name: "Get", request: { method: "GET", url } }],
+      });
+    const docs = [
+      adaptPostman(collection("https://alice:SUPER_SECRET_RAW@api.example.com/v1/items")),
+      adaptPostman(
+        collection({ raw: "https://bob:SUPER_SECRET_ONLY_RAW@raw.example.com:8443/v1/items" }),
+      ),
+      adaptPostman(
+        collection({ raw: "{{base}}/v1/items", host: ["{{base}}"], path: ["v1", "items"] }, [
+          { key: "base", value: "https://carol:SUPER_SECRET_VAR@var.example.com" },
+        ]),
+      ),
+    ];
+    expect(docs.map((d) => d.servers?.[0]?.url)).toEqual([
+      "https://api.example.com",
+      "https://raw.example.com:8443",
+      "https://var.example.com",
+    ]);
+    for (const doc of docs) expect(JSON.stringify(doc)).not.toContain("SUPER_SECRET");
+  });
+
+  it("strips to the last @ of the authority and never lets a later @ move the host", () => {
+    const collection = (url: unknown, variable: unknown[] = []) =>
+      JSON.stringify({
+        info: { name: "creds", schema: SCHEMA_V21 },
+        variable,
+        item: [{ name: "Get", request: { method: "GET", url } }],
+      });
+    const docs = [
+      // An email-style username and a password that itself contains "@".
+      adaptPostman(collection("https://alice@corp.example:p@SUPER_SECRET_AT@api.example.com/v1")),
+      // A host variable without a scheme, with leading whitespace.
+      adaptPostman(
+        collection({ raw: "{{base}}/v1/items", host: ["{{base}}"], path: ["v1", "items"] }, [
+          { key: "base", value: " carol:SUPER_SECRET_BARE@bare.example.com" },
+        ]),
+      ),
+      // An "@" in a query is not userinfo: the host stays what the value names.
+      adaptPostman(
+        collection({ raw: "{{base}}/v1/items", host: ["{{base}}"], path: ["v1", "items"] }, [
+          { key: "base", value: "https://evil.example.com?x=@good.example.com" },
+        ]),
+      ),
+    ];
+    expect(docs[0]?.servers?.[0]?.url).toBe("https://api.example.com");
+    expect(docs[1]?.servers?.[0]?.url).toBe("https://bare.example.com");
+    expect(docs[2]?.servers?.[0]?.url).not.toMatch(/^https:\/\/good\.example\.com/);
+    for (const doc of docs) expect(JSON.stringify(doc)).not.toContain("SUPER_SECRET");
+  });
+
+  it("reads userinfo after a single slash or a backslash as browsers do, never as a path", () => {
+    const collection = (url: unknown, variable: unknown[] = []) =>
+      JSON.stringify({
+        info: { name: "creds", schema: SCHEMA_V21 },
+        variable,
+        item: [{ name: "Get", request: { method: "GET", url } }],
+      });
+    for (const slashes of ["/", "", "///", "\\"]) {
+      const doc = adaptPostman(
+        collection(`https:${slashes}alice:SUPER_SECRET_RAW@api.example.com/v1/items`),
+      );
+      expect(doc.servers?.[0]?.url).toBe("https://api.example.com");
+      expect(Object.keys(doc.paths ?? {})).toEqual(["/v1/items"]);
+      expect(JSON.stringify(doc)).not.toContain("SUPER_SECRET");
+    }
+    // A host variable whose value can't be shown free of userinfo stays a template.
+    const templated = adaptPostman(
+      collection({ raw: "{{base}}/v1/items", host: ["{{base}}"], path: ["v1", "items"] }, [
+        { key: "base", value: "https:/carol:SUPER_SECRET_VAR@var.example.com" },
+      ]),
+    );
+    expect(templated.servers?.[0]?.url).toBe("https://{{base}}");
+    expect(JSON.stringify(templated)).not.toContain("SUPER_SECRET");
   });
 });

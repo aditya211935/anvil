@@ -5,10 +5,11 @@ transport path (`packages/runtime/src/transport.ts`) against a REAL local TLS
 server, not a mock. Nothing here is a real secret — this is a throwaway CA and
 a matching server/client certificate pair, generated on 2026-10-11 with the
 commands below and valid for 10 years (until 2036-10-08). **Never reuse these
-files outside this package's own tests** (`transport.test.ts`,
-`cancellation.test.ts`, `credentials.test.ts`): they are checked in
-specifically so tests are hermetic and reproducible without regenerating certs
-on every run.
+files outside tests.** They serve this package's tests (`transport.test.ts`,
+`cancellation.test.ts`, `credentials.test.ts`) and the generated SDKs' mTLS
+smoke test (`packages/generators/src/sdk-mtls-smoke.test.ts`), which used to
+carry a second test PKI of its own. They are checked in specifically so tests
+are hermetic and reproducible without regenerating certs on every run.
 
 The previous test CA's private key was once checked in and stays in git
 history, so that CA and its two certs were replaced; nothing trusts the old CA.

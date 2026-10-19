@@ -504,10 +504,9 @@ public final class CallOptions {
  * `HttpClient.Builder.sslContext` already lets a caller supply any TLS
  * configuration, so mTLS needs nothing new in the call path — only something
  * that builds the right `SSLContext`, using only `java.security` /
- * `javax.net.ssl`. The private key MUST be PKCS#8
- * (`-----BEGIN PRIVATE KEY-----`); a traditional PKCS#1 RSA key
- * (`-----BEGIN RSA PRIVATE KEY-----`) is not directly loadable by
- * `KeyFactory` and must be converted first, e.g.
+ * `javax.net.ssl`. The private key MUST be PKCS#8 (its PEM label is
+ * "PRIVATE KEY"); a traditional PKCS#1 RSA key (label "RSA PRIVATE KEY") is
+ * not directly loadable by `KeyFactory` and must be converted first, e.g.
  * `openssl pkcs8 -topk8 -nocrypt -in key.pem -out key-pkcs8.pem`.
  */
 export function mtlsFile(pkg: string): string {

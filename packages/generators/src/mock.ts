@@ -416,6 +416,20 @@ let faults = new Map(); // operationId -> { status, times }
 // Loopback unless ANVIL_MOCK_HOST names another address: anyone who reaches the
 // mock can read its captures and steer its scenarios and faults.
 const MOCK_HOST = process.env.ANVIL_MOCK_HOST || "127.0.0.1";
+const LOOPBACK_BIND = ["127.0.0.1", "::1", "localhost"].includes(MOCK_HOST);
+
+// A web page can still reach a loopback mock: a plain-text POST needs no CORS
+// preflight, and DNS rebinding makes a GET same-origin. The control routes refuse
+// any request that carries an Origin header (browsers send one, Node clients do
+// not) and, on a loopback bind, any Host that is not a loopback name.
+function controlRefusal(req) {
+  if (req.headers.origin !== undefined) return "The control routes do not answer browser requests.";
+  if (!LOOPBACK_BIND) return undefined;
+  const host = String(req.headers.host ?? "").toLowerCase().replace(/:[0-9]+$/, "");
+  return ["127.0.0.1", "localhost", "[::1]"].includes(host)
+    ? undefined
+    : "The control routes answer only a loopback Host.";
+}
 
 /**
  * Match one template segment against a concrete (percent-decoded) segment.
@@ -639,6 +653,8 @@ createServer((req, res) => {
     }
     const rawBody = Buffer.concat(chunks).toString("utf8");
     if (url.pathname.startsWith("/__anvil/")) {
+      const refusal = controlRefusal(req);
+      if (refusal) return json(res, 403, { error: { code: "forbidden", message: refusal } });
       try {
         return control(req, res, url, rawBody);
       } catch (err) {

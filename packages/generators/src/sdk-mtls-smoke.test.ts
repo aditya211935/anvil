@@ -56,7 +56,8 @@ function runDriver(
 const fixturesDir = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
 const read = (rel: string) => readFileSync(join(fixturesDir, rel), "utf8");
 
-const tlsDir = fileURLToPath(new URL("../test-fixtures/tls/", import.meta.url));
+// The one test-only PKI in the repo, shared with the runtime transport tests.
+const tlsDir = fileURLToPath(new URL("../../runtime/test-fixtures/tls/", import.meta.url));
 const readTls = (rel: string) => readFileSync(join(tlsDir, rel), "utf8");
 
 const TYPESCRIPT_TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
@@ -105,7 +106,7 @@ beforeAll(async () => {
     },
     (req, res) => {
       const peer = (req.socket as TLSSocket).getPeerCertificate();
-      sawClientCert = Boolean(peer?.subject?.CN === "anvil-sdk-client");
+      sawClientCert = Boolean(peer?.subject?.CN === "anvil-test-client");
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ id: "cust_1" }));
     },

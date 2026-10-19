@@ -322,6 +322,36 @@ describe("generated mock server", () => {
     expect(src).toContain(".listen(Number(process.env.PORT ?? 8081), MOCK_HOST, function () {");
   });
 
+  it("refuses browser requests and foreign Hosts on the control routes, and keeps serving", async () => {
+    // A plain-text POST from a web page needs no preflight; a DNS-rebinding page
+    // reads a GET as same-origin. Node clients send neither an Origin nor a foreign Host.
+    const port = Number(new URL(base).port);
+    const send = async (head: string): Promise<string> => {
+      const socket = connect(port, "127.0.0.1");
+      await new Promise((resolve) => socket.once("connect", resolve));
+      socket.write(`${head}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+      let reply = "";
+      socket.setTimeout(5_000, () => socket.destroy());
+      socket.on("data", (chunk: Buffer) => {
+        reply += chunk.toString("utf8");
+      });
+      await new Promise((resolve) => socket.once("close", resolve));
+      return reply;
+    };
+    const host = `127.0.0.1:${port}`;
+    for (const head of [
+      `POST /__anvil/reset HTTP/1.1\r\nHost: ${host}\r\nOrigin: https://evil.example`,
+      `POST /__anvil/scenario HTTP/1.1\r\nHost: ${host}\r\nOrigin: null`,
+      `GET /__anvil/capture HTTP/1.1\r\nHost: rebind.evil.example:${port}`,
+    ]) {
+      expect(await send(head), head).toMatch(/^HTTP\/1\.1 403 /);
+    }
+    expect(await send(`GET /__anvil/capture HTTP/1.1\r\nHost: localhost:${port}`)).toMatch(
+      /^HTTP\/1\.1 200 /,
+    );
+    expect((await fetch(`${base}/__anvil/capture`)).status).toBe(200);
+  });
+
   it("answers a request target the URL parser refuses with 400, and keeps serving", async () => {
     // Node's parser admits these and `new URL` throws on them; thrown in the
     // request's "end" handler, that was an uncaught exception that ended the mock.

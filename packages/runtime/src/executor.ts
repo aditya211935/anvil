@@ -544,12 +544,10 @@ function buildRequest(
 function canonicalUpstream(baseUrl: string): string {
   try {
     const url = new URL(baseUrl);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    url.pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
-    return url.toString();
+    // Scheme, host and path only: userinfo, query and fragment never reach the
+    // fingerprint. Trailing slashes are dropped, but the root path stays "/".
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    return `${url.protocol}//${url.host}${path}`;
   } catch {
     // Request construction and host pinning will reject an invalid URL later.
     // Keeping the exact value here still gives that malformed target a stable,

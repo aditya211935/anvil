@@ -254,18 +254,16 @@ export async function verifyInboundToken(
   // kind can never be replayed under another.
   const branchyard = config.mode === "branchyard";
   if (branchyard ? header.alg !== "EdDSA" : header.alg !== "RS256" && header.alg !== "ES256") {
-    // `alg` is the caller's own, still-unverified header value and is echoed in the
-    // body and in WWW-Authenticate. A control character other than tab (CR, LF, NUL,
-    // DEL, …) or a non-Latin-1 character in a header value makes `writeHead` throw
-    // (ERR_INVALID_CHAR), which nothing around the request handler catches. Keep only
-    // word characters and "-" (every JWS alg name fits) and bound the length.
-    const alg = String(header.alg)
-      .replace(/[^\w-]/g, "?")
-      .slice(0, 32);
+    // `alg` is the caller's own, still-unverified header value. The refusal names the
+    // algorithms this server accepts and never repeats the caller's: every refusal
+    // text is fixed, so nothing from the request reaches the body or WWW-Authenticate
+    // (where a CR, LF or non-Latin-1 character would also make `writeHead` throw).
     return deny(
       401,
       "invalid_token",
-      `Unsupported JWT alg "${alg}" (expected ${branchyard ? "EdDSA" : "RS256 or ES256"}).`,
+      branchyard
+        ? "Unsupported JWT alg (expected EdDSA)."
+        : "Unsupported JWT alg (expected RS256 or ES256).",
       config,
     );
   }
@@ -339,14 +337,8 @@ export async function verifyInboundToken(
     const problem = branchyardClaimsProblem(claims, now, leeway);
     if (problem) return deny(401, "invalid_token", problem, config);
   }
-  const missing = missingScopes(claims, config.requiredScopes);
-  if (missing.length > 0) {
-    return deny(
-      403,
-      "insufficient_scope",
-      `Missing required scope(s): ${missing.join(" ")}.`,
-      config,
-    );
+  if (missingScopes(claims, config.requiredScopes).length > 0) {
+    return deny(403, "insufficient_scope", "Token lacks a scope this connector requires.", config);
   }
 
   return { ok: true, claims };

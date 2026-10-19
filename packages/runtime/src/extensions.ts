@@ -81,7 +81,11 @@ export interface RuntimeExtensionApi {
   AnvilError: typeof AnvilError;
   InMemoryLedger: typeof InMemoryLedger;
   hostIsAllowed: typeof hostIsAllowed;
-  /** The runtime configuration this process booted with. Carries no secret values. */
+  /**
+   * The runtime configuration this process booted with. Extensions run in-process
+   * with the runtime's own trust, and this object includes the inbound principal
+   * table, which is keyed by the raw caller keys listed in ANVIL_PRINCIPALS.
+   */
   config: RuntimeConfig;
 }
 

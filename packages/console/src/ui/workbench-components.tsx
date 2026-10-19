@@ -120,5 +120,11 @@ export function setQuery(
     else next.delete(key);
   }
   const url = `#/b/${encodeURIComponent(bundleId)}/${view}${next.size ? `?${next}` : ""}`;
-  location.replace(url);
+  // Only the fragment changes. Swap the history entry in place (no extra Back step
+  // per keystroke) and tell the hash router, which is what location.replace did.
+  const oldURL = location.href;
+  history.replaceState(null, "", url);
+  if (location.href !== oldURL) {
+    window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: location.href }));
+  }
 }
