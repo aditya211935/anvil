@@ -333,10 +333,31 @@ describe("XSD time types at the served surface", () => {
       >[0],
     );
     const accepts = (at: string) => validator.safeParse({ at }).success;
-    for (const at of ["10:00:00", "10:00:00.5", "10:00:00Z", "10:00:00+05:30"]) {
+    for (const at of [
+      "10:00:00",
+      "10:00:00.5",
+      "10:00:00Z",
+      "10:00:00+05:30",
+      "23:59:59-14:00",
+      "24:00:00",
+      "00:00:00+14:00",
+    ]) {
       expect(accepts(at)).toBe(true);
     }
-    for (const at of ["10:00", "10:00:00 PM", "2026-01-01T10:00:00Z"]) {
+    // XSD's ranges still hold: hours, minutes, seconds and offsets out of range fail.
+    for (const at of [
+      "10:00",
+      "10:00:00 PM",
+      "2026-01-01T10:00:00Z",
+      "99:99:99Z",
+      "12:60:00Z",
+      "12:00:60",
+      "24:01:00Z",
+      "24:00:00.5",
+      "10:00:00+99:99",
+      "10:00:00+14:30",
+      "10:00:00+05:60",
+    ]) {
       expect(accepts(at)).toBe(false);
     }
   });

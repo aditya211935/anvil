@@ -2242,9 +2242,9 @@
     {
       "id": "har/unparseable-url-warning-hides-query",
       "file": "packages/compiler/src/protocols/har.ts",
-      "control": "A HAR entry whose request.url will not parse is reported with the URL cut at its query and stripped of userinfo, up to the last \"@\" of the authority. Drop the strip and a user:pass carried in that URL is written into the compiled AIR's diagnostics.",
-      "find": "        .replace(/^((?:[^/?#]*:)?\\/\\/)?[^/?#]*@/, \"$1\")\n",
-      "replace": "",
+      "control": "A HAR entry whose request.url will not parse is reported with the URL cut at its query, and not shown at all when that part has an \"@\" (a malformed URL's userinfo can't be located reliably). Show the raw string and a user:pass or api_key carried in that URL is written into the compiled AIR's diagnostics.",
+      "find": "      const shown = headWithoutUserinfo(raw);",
+      "replace": "      const shown: string | undefined = raw;",
       "tests": [
         "packages/compiler/src/protocols/har.test.ts"
       ]
@@ -2261,20 +2261,42 @@
     },
     {
       "id": "postman/no-userinfo-in-servers",
-      "file": "packages/compiler/src/protocols/postman.ts",
-      "control": "A Postman request URL or host variable written as https://user:pass@host is lowered to scheme, host and port only, stripping to the last \"@\" of the authority. Drop the strip and the username and password are copied into the lowered document's servers list and from there into AIR.",
-      "find": "  base = base.replace(/^((?:[^/?#]*:)?\\/\\/)?[^/?#]*@/, \"$1\");",
-      "replace": "  base = `${base}`;",
+      "file": "packages/compiler/src/protocols/url-userinfo.ts",
+      "control": "A server base written as https://user:pass@host, in any spelling, is lowered to scheme, host and port only. Drop the strip and every base with userinfo is refused, so a request URL with a credential in it loses its real host to the placeholder.",
+      "find": "  const stripped = normalizeSchemeSlashes(base).replace(/^((?:[^/?#]*:)?\\/\\/)?[^/?#]*@/, \"$1\");",
+      "replace": "  const stripped = normalizeSchemeSlashes(base);",
       "tests": [
-        "packages/compiler/src/protocols/postman.bugbash.test.ts"
+        "packages/compiler/src/protocols/postman.bugbash.test.ts",
+        "packages/compiler/src/protocols/url-userinfo.test.ts"
       ]
     },
     {
       "id": "postman/oauth2-urls-carry-no-credentials",
       "file": "packages/compiler/src/protocols/postman.ts",
       "control": "An oauth2 authUrl or accessTokenUrl is lowered without userinfo or a query value whose name marks it as a credential. Copy the query verbatim and that credential is written into the lowered security scheme and from there into AIR's token endpoint.",
-      "find": "  const kept = [...url.searchParams].filter(([k]) => !CREDENTIAL_QUERY_NAME.test(k));",
-      "replace": "  const kept = [...url.searchParams];",
+      "find": "  urlWithoutUserinfo(authParam(auth, key), (name) => !CREDENTIAL_QUERY_NAME.test(name));",
+      "replace": "  urlWithoutUserinfo(authParam(auth, key), () => true);",
+      "tests": [
+        "packages/compiler/src/protocols/postman.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "url-userinfo/parsed-url-rebuilt",
+      "file": "packages/compiler/src/protocols/url-userinfo.ts",
+      "control": "A URL the parser accepts with userinfo (https:/user:pass@host, with one slash) is rebuilt from its parsed parts. Return it unchanged whenever no query parameter has to go, and that userinfo is copied into a lowered oauth2 scheme.",
+      "find": "  if (head !== undefined && kept.length === url.searchParams.size) return raw;",
+      "replace": "  if (kept.length === url.searchParams.size) return raw;",
+      "tests": [
+        "packages/compiler/src/protocols/postman.bugbash.test.ts",
+        "packages/compiler/src/protocols/url-userinfo.test.ts"
+      ]
+    },
+    {
+      "id": "postman/raw-url-scheme-slashes",
+      "file": "packages/compiler/src/protocols/postman.ts",
+      "control": "A raw Postman URL reads any run of slashes or backslashes after https: as \"//\", as browsers do. Without it https:/user:pass@host/x parses with \"https:\" as the host and the credential becomes part of an operation path.",
+      "find": "  let rest = normalizeSchemeSlashes(raw.trim());",
+      "replace": "  let rest = raw.trim();",
       "tests": [
         "packages/compiler/src/protocols/postman.bugbash.test.ts"
       ]
@@ -2282,9 +2304,19 @@
     {
       "id": "wsdl/xsd-time-offset-optional",
       "file": "packages/compiler/src/protocols/wsdl.ts",
-      "control": "xsd:time lowers to a pattern whose timezone is optional, as XSD defines it. Lower it to format: time and the served tool refuses \"10:00:00\", a valid XSD time, because JSON Schema's time format requires an offset.",
-      "find": "  time: { type: \"string\", pattern: \"^\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d+)?(Z|[+-]\\\\d{2}:\\\\d{2})?$\" },",
-      "replace": "  time: { type: \"string\", format: \"time\" },",
+      "control": "xsd:time lowers to a pattern whose timezone is optional, as XSD defines it. Make the timezone required and the served tool refuses \"10:00:00\", a valid XSD time.",
+      "find": "      \"^(([01]\\\\d|2[0-3]):[0-5]\\\\d:[0-5]\\\\d(\\\\.\\\\d+)?|24:00:00(\\\\.0+)?)(Z|[+-]((0\\\\d|1[0-3]):[0-5]\\\\d|14:00))?$\",",
+      "replace": "      \"^(([01]\\\\d|2[0-3]):[0-5]\\\\d:[0-5]\\\\d(\\\\.\\\\d+)?|24:00:00(\\\\.0+)?)(Z|[+-]((0\\\\d|1[0-3]):[0-5]\\\\d|14:00))$\",",
+      "tests": [
+        "packages/compiler/src/protocols/wsdl-choice.test.ts"
+      ]
+    },
+    {
+      "id": "wsdl/xsd-time-range-checked",
+      "file": "packages/compiler/src/protocols/wsdl.ts",
+      "control": "The xsd:time pattern keeps XSD's ranges: hours to 23 or 24:00:00, minutes and seconds to 59, offsets to 14:00. Loosen it to bare two-digit fields and 99:99:99Z or +99:99 pass the served tool's validation and fail at the SOAP service.",
+      "find": "      \"^(([01]\\\\d|2[0-3]):[0-5]\\\\d:[0-5]\\\\d(\\\\.\\\\d+)?|24:00:00(\\\\.0+)?)(Z|[+-]((0\\\\d|1[0-3]):[0-5]\\\\d|14:00))?$\",",
+      "replace": "      \"^\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d+)?(Z|[+-]\\\\d{2}:\\\\d{2})?$\",",
       "tests": [
         "packages/compiler/src/protocols/wsdl-choice.test.ts"
       ]

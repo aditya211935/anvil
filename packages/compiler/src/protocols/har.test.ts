@@ -380,23 +380,28 @@ describe("HAR adapter: servers and operationId", () => {
     expect(warnings[0]?.message).toContain('"/v1/orders"');
   });
 
-  it("strips userinfo up to the last @ of the authority, with or without a scheme", () => {
+  it("never shows an unparseable request.url that may carry userinfo, however it is spelled", () => {
+    // A malformed URL's userinfo can't be located reliably (browsers read a single
+    // slash or a backslash after https: as "//"), so a URL with an "@" before its
+    // query is not shown at all; one without can't carry userinfo and still is.
     const diagnostics: Diagnostic[] = [];
     adaptHar(
       har([
         entry({ url: "https://alice@corp.example:p@SUPER_SECRET_AT@api.example.com:99999/v1" }),
-        entry({ url: "bob:SUPER_SECRET_NOSCHEME@api.example.com/v1/a@b" }),
+        entry({ url: "bob:SUPER_SECRET_NOSCHEME@api.example.com/v1/items" }),
+        entry({ url: "https:/alice:SUPER_SECRET_SLASH@api.example.com:99999/orders" }),
+        entry({ url: "https:\\\\alice:SUPER_SECRET_BACKSLASH@api.example.com:99999/orders" }),
+        entry({ url: "https:///alice:SUPER_SECRET_SLASHES@api.example.com:99999/orders" }),
+        entry({ url: "https://api.example.com:99999/orders?token=SUPER_SECRET_QUERY" }),
       ]),
       undefined,
       diagnostics,
     );
-    const messages = diagnostics
-      .filter((d) => d.code === "har_entry_unparseable_url")
-      .map((d) => d.message);
-    expect(JSON.stringify(messages)).not.toContain("SUPER_SECRET");
-    expect(messages[0]).toContain('"https://api.example.com:99999/v1"');
-    // An "@" after the authority is part of the path, not userinfo.
-    expect(messages[1]).toContain('"api.example.com/v1/a@b"');
+    const warnings = diagnostics.filter((d) => d.code === "har_entry_unparseable_url");
+    expect(warnings.map((d) => d.path)).toEqual([0, 1, 2, 3, 4, 5].map((i) => `entries[${i}]`));
+    expect(JSON.stringify(diagnostics)).not.toContain("SUPER_SECRET");
+    for (const w of warnings.slice(0, 5)) expect(w.message).toContain("not shown");
+    expect(warnings[5]?.message).toContain('"https://api.example.com:99999/orders"');
   });
 
   it("skips an entry whose request.url is not a string, with a warning instead of a crash", () => {

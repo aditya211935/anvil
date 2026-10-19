@@ -89,6 +89,7 @@
 import type { Diagnostic } from "@anvil/air";
 import { singularize } from "../naming.js";
 import type { OpenApiDocument } from "../parse.js";
+import { headWithoutUserinfo } from "./url-userinfo.js";
 
 /* ----------------------------- source shapes ----------------------------- */
 
@@ -315,18 +316,18 @@ function parseEntries(entries: HarEntry[], diagnostics: Diagnostic[] | undefined
       parsed.push({ entry, method, origin: u.origin, segments });
     } else {
       // The scrub above cleans the queryString array, not this raw string, and the
-      // warning is kept in the compiled AIR: show the URL only up to its query, with
-      // any userinfo removed, so a credential carried in the URL never lands there.
-      // Userinfo runs to the last "@" before the first "/", "?" or "#" (it may itself
-      // contain "@"), with or without a scheme in front.
-      const shown = (raw.split(/[?#]/)[0] ?? "")
-        .replace(/^((?:[^/?#]*:)?\/\/)?[^/?#]*@/, "$1")
-        .slice(0, 200);
+      // warning is kept in the compiled AIR: show the URL only up to its query, and not
+      // at all when that part has an "@", since a malformed URL's userinfo can't be
+      // located reliably and a credential carried in it must never land there.
+      const shown = headWithoutUserinfo(raw);
       diagnostics?.push({
         level: "warning",
         code: "har_entry_unparseable_url",
         path: `entries[${index}]`,
-        message: `HAR entry's request.url is not a parseable absolute URL: ${JSON.stringify(shown)}. Skipped.`,
+        message:
+          shown === undefined
+            ? "HAR entry's request.url is not a parseable absolute URL (not shown, as it may carry a credential). Skipped."
+            : `HAR entry's request.url is not a parseable absolute URL: ${JSON.stringify(shown.slice(0, 200))}. Skipped.`,
       });
     }
   });

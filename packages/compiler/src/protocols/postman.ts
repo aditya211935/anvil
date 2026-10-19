@@ -51,6 +51,7 @@
  */
 import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
+import { baseWithoutUserinfo, normalizeSchemeSlashes, urlWithoutUserinfo } from "./url-userinfo.js";
 
 /* ----------------------------- source shapes ----------------------------- */
 /* v2.0 and v2.1 differ mainly in auth payloads (object vs {key,value} array)
@@ -464,19 +465,10 @@ const CREDENTIAL_QUERY_NAME = /token|secret|key|password|session/i;
 /**
  * An oauth2 URL as the lowered document may carry it: no userinfo and no query value
  * whose name marks it as a credential. Other query parameters, such as Azure B2C's
- * `?p=` policy, are configuration and stay. A templated URL keeps what precedes its query.
+ * `?p=` policy, are configuration and stay.
  */
-function credentialFreeAuthUrl(raw: string | undefined): string | undefined {
-  if (raw === undefined || !URL.canParse(raw)) {
-    return raw?.split(/[?#]/)[0]?.replace(/^((?:[^/?#]*:)?\/\/)?[^/?#]*@/, "$1");
-  }
-  const url = new URL(raw);
-  const kept = [...url.searchParams].filter(([k]) => !CREDENTIAL_QUERY_NAME.test(k));
-  const userinfo = /^[^/?#]*\/\/[^/?#]*@/.test(raw);
-  if (!userinfo && kept.length === url.searchParams.size) return raw;
-  const query = new URLSearchParams(kept).toString();
-  return `${url.protocol}//${url.host}${url.pathname}${query ? `?${query}` : ""}`;
-}
+const authUrl = (auth: PostmanAuth, key: string): string | undefined =>
+  urlWithoutUserinfo(authParam(auth, key), (name) => !CREDENTIAL_QUERY_NAME.test(name));
 
 /** Stable scheme name per auth type; one scheme serves every use of the type. */
 const SCHEME_NAMES: Record<string, string> = {
@@ -514,12 +506,8 @@ function toSecurityScheme(auth: PostmanAuth): Record<string, unknown> | undefine
         type: "oauth2",
         flows: {
           authorizationCode: {
-            authorizationUrl:
-              credentialFreeAuthUrl(authParam(auth, "authUrl")) ??
-              "https://example.invalid/authorize",
-            tokenUrl:
-              credentialFreeAuthUrl(authParam(auth, "accessTokenUrl")) ??
-              "https://example.invalid/token",
+            authorizationUrl: authUrl(auth, "authUrl") ?? "https://example.invalid/authorize",
+            tokenUrl: authUrl(auth, "accessTokenUrl") ?? "https://example.invalid/token",
             scopes,
           },
         },
@@ -545,7 +533,7 @@ interface LoweredUrl {
 
 /** Split a raw URL string into the object shape, minimally and deterministically. */
 function parseRawUrl(raw: string): PostmanUrl {
-  let rest = raw.trim();
+  let rest = normalizeSchemeSlashes(raw.trim());
   const hash = rest.indexOf("#");
   if (hash >= 0) rest = rest.slice(0, hash);
   let queryStr = "";
@@ -629,11 +617,12 @@ function lowerUrl(url: PostmanUrl | string, variables: Map<string, string>): Low
   } else {
     base = `${protocol}://${hostRaw}${port}`;
   }
-  // Userinfo in a request URL or a host variable is a credential. It runs to the last
-  // "@" before the first "/", "?" or "#" (the userinfo may itself contain "@"); an "@"
-  // after that is not userinfo and must not move the host. The lowered document keeps
-  // scheme, host and port only.
-  base = base.replace(/^((?:[^/?#]*:)?\/\/)?[^/?#]*@/, "$1");
+  // Userinfo in a request URL or a host variable is a credential; the lowered document
+  // keeps scheme, host and port only. A base that can't be shown free of it falls back
+  // to the unresolved template, or to a non-routable placeholder.
+  base =
+    baseWithoutUserinfo(base) ??
+    (hostVar !== undefined ? `https://{{${hostVar}}}${port}` : "https://example.invalid");
 
   const segments = Array.isArray(structured.path)
     ? structured.path.map((s) => (typeof s === "string" ? s : (s.value ?? "")))
