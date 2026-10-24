@@ -133,3 +133,50 @@ describe("expectedWire serializes parameters by the shared style table", () => {
     expect(wire.headers["x-meta"]).toBe("k,v");
   });
 });
+
+const RENAMED_INPUT_SPEC = JSON.stringify({
+  openapi: "3.0.3",
+  info: { title: "Calls", version: "1" },
+  servers: [{ url: "https://calls.example.test" }],
+  paths: {
+    "/Calls.json": {
+      get: {
+        operationId: "ListCall",
+        parameters: [
+          { name: "EndTime", in: "query", schema: { type: "string" } },
+          { name: "EndTime<", in: "query", schema: { type: "string" } },
+          { name: "EndTime>", in: "query", schema: { type: "string" } },
+        ],
+        responses: { "200": { description: "OK" } },
+      },
+    },
+  },
+});
+
+describe("bundle driver re-projected input names", () => {
+  it("keys the seeded object by the agent key the compiler chose, not the snake-cased wire name", async () => {
+    const air = await compile({ spec: RENAMED_INPUT_SPEC, serviceId: "calls" });
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture: ListCall not compiled");
+    expect(op.input.params.map((p) => [p.name, p.agentName])).toEqual([
+      ["EndTime", undefined],
+      ["EndTime<", "end_time_lt"],
+      ["EndTime>", "end_time_gt"],
+    ]);
+    const args = { end_time: "a", end_time_lt: "b", end_time_gt: "c" };
+    expect(cliFlagsFor(op, args)).toEqual([
+      "--end-time",
+      "a",
+      "--end-time-lt",
+      "b",
+      "--end-time-gt",
+      "c",
+    ]);
+    // The flags round-trip to the exact wire query the MCP surface would send.
+    expect(expectedWire(op, args).query).toMatchObject({
+      EndTime: "a",
+      "EndTime<": "b",
+      "EndTime>": "c",
+    });
+  });
+});

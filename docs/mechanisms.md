@@ -123,6 +123,26 @@ decisions made over the whole spec at once.
   across **both generated surfaces** — `cli.command` *and* `mcp.toolName` — to a
   fixpoint. That fixes finding #23, where a toolName collision was invisible to a
   resolver keyed only on the command.
+- **Input-name re-projection** (`input-names.ts`). Agent-facing input keys are
+  snake_case over exact wire names, and real contracts carry wire inputs that
+  are distinct yet collapse under it: Twilio's `EndTime` / `EndTime<` /
+  `EndTime>`, Zendesk's `role` / `role[]`, Microsoft Graph's path `user-id`
+  beside query `userId`, OData TripPin's `UserName` / `userName` as two keys of
+  one path. The validator rightly blocks one public property over two wire
+  fields (`duplicate_agent_input_name`); the repair is on the projection side.
+  Only when inputs of one operation actually collide, and only for inputs with
+  no human-chosen `agentName` (a chosen name always wins), each colliding input
+  gets a deterministic `agentName`, in rule order: comparison operators the case
+  conversion erased (`<`→`_lt`, `>`→`_gt`, `<=`→`_lte`, `>=`→`_gte`, `!=`/`<>`→`_ne`),
+  the array-bracket spelling (`role[]`→`role_list`, the bare name keeps `role`),
+  a location suffix for one name in several locations (path keeps the bare key,
+  then query, body, header, cookie: `user_id_query`; a param colliding with the
+  whole-body `body` envelope likewise becomes `body_query`), and finally a wire-order
+  ordinal for case-only variants in one location (`user_name`, `user_name_2`).
+  Wire names are never touched; every surface derives from the one
+  `agentPropKey`, each schema property records `x-anvil-wire-name`, and the
+  operation gets a review note plus an `agent_input_name_disambiguated`
+  diagnostic naming what moved and why. Two chosen names that collide still block.
 
 ## 4. Round-trip law hardening — `packages/air/src/serialize.ts`
 
