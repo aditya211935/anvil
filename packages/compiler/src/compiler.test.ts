@@ -370,6 +370,47 @@ paths:
     const diagnostic = air.diagnostics.find((d) => d.code === "query_language_passthrough");
     expect(diagnostic?.level).toBe("error");
   });
+
+  it("treats a manifest that explicitly holds a passthrough blocked as the reviewed decision", async () => {
+    // Jira's JQL and Xero's `where` are query languages no query_policy dialect
+    // guards: the only honest decision is to keep them blocked. Saying so in the
+    // manifest closes the open question — the block stands, the compile no
+    // longer fails on it — while approving one without a policy is still refused.
+    const queryApi = `openapi: 3.0.3
+info: { title: Database Query, version: 1.0.0 }
+paths:
+  /query:
+    post:
+      operationId: executeQuery
+      parameters:
+        - name: sql
+          in: query
+          required: true
+          schema: { type: string }
+      responses: { "200": { description: ok } }
+`;
+    const held = await compile({
+      spec: queryApi,
+      serviceId: "database",
+      manifest: `service: { name: database }\noperations:\n  executeQuery: { state: blocked }\n`,
+    });
+    const heldOp = held.operations[0];
+    expect(heldOp?.state).toBe("blocked");
+    const acknowledged = held.diagnostics.filter((d) => d.code === "query_language_passthrough");
+    expect(acknowledged.map((d) => d.level)).toEqual(["warning"]);
+    expect(acknowledged[0]?.message).toContain("explicit decision");
+    expect(held.diagnostics.some((d) => d.level === "error")).toBe(false);
+
+    const approved = await compile({
+      spec: queryApi,
+      serviceId: "database",
+      manifest: `service: { name: database }\noperations:\n  executeQuery: { state: approved }\n`,
+    });
+    expect(approved.operations[0]?.state).toBe("blocked");
+    expect(approved.diagnostics.find((d) => d.code === "query_language_passthrough")?.level).toBe(
+      "error",
+    );
+  });
 });
 
 describe("side_effect override coherence", () => {

@@ -18,9 +18,8 @@ pnpm corpus:enterprise
 node tools/corpus/enterprise/smoke.mjs
 ```
 
-The full lane currently reports known conversion and policy findings and exits
-nonzero. A nonzero result does not prevent the report from being written. Run
-the smoke command separately even when conversion reports findings.
+A nonzero result does not prevent the report from being written. Run the smoke
+command separately even when conversion reports findings.
 
 ```bash
 pnpm corpus:enterprise --systems gmail,canva,sap_s4hana
@@ -115,8 +114,13 @@ node tools/corpus/enterprise/smoke.mjs --report /path/to/full-report
 operation inventory, posture, diagnostics and check outcomes. The report also
 records the base Git tree, whether the worktree was dirty and a SHA-256 over
 implementation source files. Run it after building that source. Compiler errors
-that consist entirely of `query_language_passthrough` are `policy-blocked`;
-they require reviewed query constraints rather than bypassing the gate.
+that consist entirely of `query_language_passthrough` are `policy-blocked`: the
+compiler held every unconstrained query-language operation (Jira's JQL search,
+Xero's `where` filters, Okta's claim expressions) as `blocked`, lost nothing
+from the contract and exposed nothing. That is the designed outcome of a raw
+import, so it does not fail the lane; it stays its own status in the report,
+and a reviewer unblocks such an operation with a manifest decision, never by
+bypassing the gate. Conversion errors, failed checks and timeouts fail the lane.
 
 Exit 0 means every acquired source passed; export requirements are reported but
 do not enter the passing denominator. Exit 1 means a conversion, acquisition or

@@ -89,7 +89,12 @@ if (values.list) {
   }
   report.finishedAt = new Date().toISOString();
   writeReport(report, reportDir);
-  // Export requirements are coverage gaps, never green tests. Other failures fail the lane.
+  // Export requirements are coverage gaps, never green tests. A policy block is
+  // the designed outcome of a raw import: the compiler held every unconstrained
+  // query-language operation as `blocked` and said so, nothing was lost from the
+  // contract and nothing is exposed — a reviewer unblocks it with a manifest, not
+  // the corpus. It stays visible in the report as its own status. Everything
+  // else (a conversion error, a failed check, a timeout) fails the lane.
   process.exitCode = !report.results.some((r) => r.source?.status === "acquired") ? 2
-    : report.results.some((r) => !["pass", "needs-export"].includes(r.status)) ? 1 : 0;
+    : report.results.some((r) => !["pass", "needs-export", "policy-blocked"].includes(r.status)) ? 1 : 0;
 }

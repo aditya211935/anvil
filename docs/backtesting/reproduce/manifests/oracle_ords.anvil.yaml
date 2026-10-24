@@ -1,0 +1,16 @@
+# Supplemental Anvil manifest for the Oracle REST Data Services (ORDS) backtest.
+# The published contract accepts HTTP basic OR an OAuth 2.0 client-credentials
+# grant whose token URL is a server template (`https://{host}:{port}/ords/
+# {schema}/oauth/token`) the compiler cannot resolve to one endpoint, so the two
+# alternatives do not resolve to a provably equivalent principal and every
+# operation stays blocked until a human chooses. Basic auth is the credential
+# the corpus drives the generated mock with; nothing here approves an operation
+# (conformance mode approves the inspected reads itself).
+service:
+  name: oracle_ords
+  display_name: Oracle REST Data Services
+  owner: backtesting
+  environment: prod
+auth:
+  type: basic
+  scopes: []

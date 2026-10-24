@@ -316,6 +316,29 @@ export function actionFor(method: HttpMethod, endsWithParam: boolean): string {
 // naming-groups.ts beside the collision tokenizer that also strips it.
 
 /**
+ * The resource noun an operationId carries once its leading verb is removed —
+ * `queryTable` → `table`, `getMetadataCatalog` → `metadata_catalog`. Used only
+ * when the path has no concrete segment to name the resource. The leading token
+ * is dropped when it is a verb from the shared action vocabulary (classify.ts)
+ * or a CRUD/HTTP-style verb; an operationId that is one word, or whose first
+ * token is not a verb, yields nothing and the caller keeps its own fallback.
+ */
+function resourceFromOperationId(operationId: string | undefined): string | undefined {
+  if (!operationId) return undefined;
+  const tokens = snakeCase(operationId).split("_").filter(Boolean);
+  if (tokens.length < 2) return undefined;
+  const [first, ...rest] = tokens as [string, ...string[]];
+  const isVerb =
+    actionVerbFor(first) !== undefined ||
+    /^(get|list|fetch|read|retrieve|query|find|create|insert|add|post|put|update|edit|modify|patch|replace|upsert|delete|remove|destroy|set|do|run|execute|exec|call|handle|process)$/.test(
+      first,
+    );
+  if (!isVerb) return undefined;
+  const noun = rest.join("_");
+  return noun.length > 0 ? noun : undefined;
+}
+
+/**
  * The true action verb from an operationId when the HTTP method genuinely
  * can't express it: a POST reused for update/delete (Twilio's `UpdateMessage`,
  * `DeleteX` are all `POST`, since Twilio — like several REST APIs — reuses
@@ -501,10 +524,17 @@ export function deriveNames(
   // A trailing method segment (bulk-qualified verb, or bare CRUD verb — rules
   // A/C) names an operation, not a thing; re-home the resource onto the real
   // segment before it. Resource-only: the action below is untouched.
+  // A path made only of parameters (`/{schema}/{table}/`, Oracle REST Data
+  // Services' table access) names no resource at all; the operationId's own
+  // noun (`queryTable` → `table`, `getRow` → `row`) is then the next-strongest
+  // signal, and far more truthful than the service id, which singularizes into
+  // a non-word and collides every such operation onto one command.
+  const operationIdResource =
+    segmentResource === undefined ? resourceFromOperationId(raw.operationId) : undefined;
   const resource =
     segmentResource !== undefined
       ? rehomeMethodSegments(segmentResource, custom.path, estate)
-      : serviceId;
+      : (operationIdResource ?? serviceId);
   // The path addresses a single item when it ends in a `/{param}` segment or an
   // OData key predicate (`Set('id')`) — either way the action is get/update/
   // delete, not list.
@@ -561,7 +591,22 @@ export function deriveNames(
   // operationId (0.9) below the 0.5 review threshold. Jira's own `doTransition`
   // is exactly that case — Atlassian's community MCP server renames it to
   // `transition_issue` for the same reason this must not stay confident.
-  const weaknesses = new Set(nameWeaknesses({ canonicalName, resource, action, hasResource }));
+  // A resource read off the operationId is a real noun an agent can route on,
+  // so it is not the `no_resource` weakness; the signal below still records
+  // where it came from.
+  const weaknesses = new Set(
+    nameWeaknesses({
+      canonicalName,
+      resource,
+      action,
+      hasResource: hasResource || operationIdResource !== undefined,
+    }),
+  );
+  if (operationIdResource !== undefined) {
+    signals.push(
+      `no concrete path segment — resource "${snakeCase(operationIdResource)}" taken from the operationId`,
+    );
+  }
   const verb = canonicalName.split("_")[0] ?? "";
   const WEAKNESS_DELTA: ReadonlyArray<{ w: NameWeakness; delta: number; signal: string }> = [
     {

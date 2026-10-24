@@ -8,8 +8,12 @@ service:
   display_name: HubSpot CRM API
   owner: backtesting
   environment: prod
+# The Deals spec declares no per-operation security requirement, and the legacy
+# scope-only `oauth2` service type names no grant the runtime could execute.
+# HubSpot private-app access tokens are HTTP bearer tokens, so that is the
+# executable credential chosen here; the scopes are the ones those calls need.
 auth:
-  type: oauth2
+  type: jwt_bearer
   scopes: ["crm.objects.deals.read", "crm.objects.deals.write"]
 operations:
   "get-/crm/v3/objects/0-3_getPage": { state: approved }

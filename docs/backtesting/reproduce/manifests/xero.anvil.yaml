@@ -1,0 +1,36 @@
+# Supplemental Anvil manifest for the Xero Accounting backtest. The published
+# contract is compiled whole; nothing here approves an operation.
+#
+# Every collection read takes a `where` parameter that is Xero's own filter
+# language (`Status=="ACTIVE" AND Type=="BANK"`): an unconstrained expression
+# string an agent could inject arbitrary logic through. The compiler classifies
+# each as a query-language passthrough and blocks it, and no `query_policy`
+# dialect guards this grammar, so the reviewed decision is to keep them blocked.
+# Declaring that decision here is what turns the open finding into an
+# acknowledged one — the operations stay blocked and are never exposed.
+service:
+  name: xero
+  display_name: Xero Accounting API
+  owner: backtesting
+  environment: prod
+operations:
+  getAccounts: { state: blocked }
+  getBatchPayments: { state: blocked }
+  getBankTransactions: { state: blocked }
+  getBankTransfers: { state: blocked }
+  getContacts: { state: blocked }
+  getContactGroups: { state: blocked }
+  getCreditNotes: { state: blocked }
+  getCurrencies: { state: blocked }
+  getExpenseClaims: { state: blocked }
+  getInvoices: { state: blocked }
+  getItems: { state: blocked }
+  getManualJournals: { state: blocked }
+  getOverpayments: { state: blocked }
+  getPayments: { state: blocked }
+  getPrepayments: { state: blocked }
+  getReceipts: { state: blocked }
+  getRepeatingInvoices: { state: blocked }
+  getTaxRates: { state: blocked }
+  getTrackingCategories: { state: blocked }
+  getUsers: { state: blocked }

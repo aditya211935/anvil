@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { inventory } from "./enterprise/checks.mjs";
 import { measureNamingConformance, namingConformanceOracle } from "./naming-conformance.mjs";
 import {
   ANVIL,
@@ -286,6 +287,25 @@ async function compileAndCheck({ specPath, service, root, outBase, manifest, cap
   };
 }
 
+/**
+ * The operations a prepared spec declares, counted without the compiler: HTTP
+ * method entries for OpenAPI/Swagger, method ids for Google Discovery (the
+ * enterprise lane's own `inventory`). GraphQL, protobuf, OData and WSDL sources
+ * have no comparable count here, so they stay baseline-only (null).
+ */
+function countSourceOperations(specPath) {
+  if (!/\.spec\.json$/.test(specPath)) return null;
+  try {
+    const text = readFileSync(specPath, "utf8");
+    const doc = JSON.parse(text);
+    const format = doc.discoveryVersion ? "discovery" : "openapi";
+    const counted = inventory(text, format);
+    return counted.kind === "entities" ? null : counted.entries.length;
+  } catch {
+    return null;
+  }
+}
+
 // --- quick mode ---------------------------------------------------------------
 
 async function quick(args) {
@@ -376,9 +396,23 @@ async function quick(args) {
     if (conformance.naming) record.naming = conformance.naming;
     // Op-count differential: a *decrease* against baseline means operations
     // were silently dropped — gate on it. An increase is vendor drift: warn.
+    // The baseline is a snapshot of a LIVE spec, so the source itself can
+    // shrink (Okta retired one of 732 operations): count the prepared spec's
+    // own operations independently of the compiler and, when the compiled
+    // count still equals it, the decrease is vendor drift to warn about and
+    // refresh — not a compiler drop. Only a count the compiler cannot explain
+    // from its own input fails.
+    const sourceOpCount = countSourceOperations(preparedPath(work, sys));
     if (base?.opCount != null && res.opCount != null) {
-      if (res.opCount < base.opCount) {
-        oracles.push({ name: "op-count", ok: false, detail: `dropped: ${res.opCount} < baseline ${base.opCount}` });
+      if (res.opCount < base.opCount && sourceOpCount !== null && res.opCount === sourceOpCount) {
+        record.warn = `op count fell ${base.opCount} -> ${res.opCount}, matching the source's own ${sourceOpCount} (vendor drift; refresh baseline when intentional)`;
+        oracles.push({ name: "op-count", ok: true, detail: record.warn });
+      } else if (res.opCount < base.opCount) {
+        oracles.push({
+          name: "op-count",
+          ok: false,
+          detail: `dropped: ${res.opCount} < baseline ${base.opCount}${sourceOpCount !== null ? ` (source declares ${sourceOpCount})` : ""}`,
+        });
       } else if (res.opCount > base.opCount) {
         record.warn = `op count grew ${base.opCount} -> ${res.opCount} (vendor drift; refresh baseline when intentional)`;
         oracles.push({ name: "op-count", ok: true, detail: record.warn });
@@ -843,9 +877,25 @@ function capabilityForReads(airPath, approved) {
 function conformanceOne(sys, work) {
   const dir = join(work, "compiled", sys.name);
   const spec = preparedPath(work, sys);
-  const compiled = runNode([ANVIL, "compile", spec, "--service", sys.name, "--out", dir], {
-    timeoutMs: 300_000,
-  });
+  // The same reproduce manifest quick mode compiles with, when the recipe has
+  // one: it carries the reviewed decisions a raw compile cannot make (an auth
+  // alternative the source leaves open, a union body narrowed to the member
+  // the service reads). Conformance still approves only the reads it inspects
+  // below; a manifest never widens the surface this lane drives.
+  const manifest = join(REPRODUCE_DIR, "manifests", `${sys.name}.anvil.yaml`);
+  const compiled = runNode(
+    [
+      ANVIL,
+      "compile",
+      spec,
+      ...(existsSync(manifest) ? ["--manifest", manifest] : []),
+      "--service",
+      sys.name,
+      "--out",
+      dir,
+    ],
+    { timeoutMs: 300_000 },
+  );
   if (compiled.status !== 0)
     return { ok: false, classification: "compile-error", detail: lastLines(compiled) };
 
