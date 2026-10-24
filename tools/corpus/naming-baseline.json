@@ -153,11 +153,11 @@
       "overStrippedResources": 0
     },
     "bigquery": {
-      "operations": 42,
+      "operations": 47,
       "zeroOverlapResource": 0,
       "stutters": {
         "spec_authored": 0,
-        "service_prefix_join": 42,
+        "service_prefix_join": 47,
         "disambiguation_suffix": 0
       },
       "overStrippedResources": 0

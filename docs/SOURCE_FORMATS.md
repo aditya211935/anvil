@@ -375,6 +375,22 @@ Request and response references become component schemas, and published OAuth
 scopes are preserved. Operational authorization, quotas, and tenant policy
 remain deployment concerns.
 
+A method's `path` is its wire template; `flatPath` is not used by default
+because its variable names (`{projectsId}`) do not match the method's declared
+parameters (`projectId`). The exception is a collision: when two methods share
+one verb and `path` through a reserved resource template (BigQuery's tables,
+routines and row access policies all publish `POST {+resource}:getIamPolicy`;
+Places' `get` and `photos.getMedia` both publish `GET v1/{+name}`), the OpenAPI
+path map cannot hold both. Each colliding method is then lowered on its
+`flatPath`, with every flatPath variable bound as a required path parameter and
+the expanded template parameter (`resource`, `name`) dropped. The derivation is
+verified first: the template parameter's `pattern` must be anchored, have as
+many segments as the flatPath spells, and agree with it literal for literal,
+with each `[^/]+` group facing one flatPath variable. Each rebinding is reported
+as an `info` `discovery_flatpath_binding` diagnostic. A collision that cannot be
+reconciled this way stays an `error` `discovery_endpoint_collision`, naming the
+reason, and the later method is not emitted rather than overwriting the first.
+
 ### OData metadata
 
 Each entity set becomes list, read-one, create, update, and delete operations

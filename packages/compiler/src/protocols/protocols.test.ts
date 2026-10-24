@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import type { Diagnostic } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { compile } from "../compile.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
@@ -678,6 +679,278 @@ describe("SOAP/WSDL multi-file resolution", () => {
     const item = cycled.paths?.["/P/Ping"] as Record<string, Op>;
     const op = item.post as Op;
     expect(op.requestBody?.content["application/json"]?.schema).toMatchObject({ type: "string" });
+  });
+});
+
+/**
+ * BigQuery-shaped IAM methods: tables, routines and rowAccessPolicies all
+ * publish `POST {+resource}:getIamPolicy`. Only the `resource` parameter's
+ * `pattern` and the method's `flatPath` say which resource each one addresses.
+ */
+const TABLES_PATTERN = "^projects/[^/]+/datasets/[^/]+/tables/[^/]+$";
+const TABLES_FLAT = "projects/{projectsId}/datasets/{datasetsId}/tables/{tablesId}:getIamPolicy";
+const ROUTINES_PATTERN = "^projects/[^/]+/datasets/[^/]+/routines/[^/]+$";
+const ROUTINES_FLAT =
+  "projects/{projectsId}/datasets/{datasetsId}/routines/{routinesId}:getIamPolicy";
+
+interface IamShape {
+  pattern?: string;
+  flatPath?: string;
+}
+
+function iamMethod(resource: string, shape: IamShape) {
+  return {
+    id: `bigquery.${resource}.getIamPolicy`,
+    httpMethod: "POST",
+    path: "{+resource}:getIamPolicy",
+    flatPath: shape.flatPath,
+    parameterOrder: ["resource"],
+    parameters: {
+      resource: {
+        type: "string",
+        location: "path",
+        required: true,
+        pattern: shape.pattern,
+        description: "REQUIRED: The resource for which the policy is being requested.",
+      },
+    },
+    request: { $ref: "GetIamPolicyRequest" },
+    response: { $ref: "Policy" },
+    scopes: ["https://www.googleapis.com/auth/bigquery"],
+  };
+}
+
+function bigqueryIamDoc(
+  tables: IamShape = { pattern: TABLES_PATTERN, flatPath: TABLES_FLAT },
+  routines: IamShape = { pattern: ROUTINES_PATTERN, flatPath: ROUTINES_FLAT },
+): string {
+  return JSON.stringify({
+    kind: "discovery#restDescription",
+    name: "bigquery",
+    version: "v2",
+    title: "BigQuery API",
+    baseUrl: "https://bigquery.googleapis.com/bigquery/v2/",
+    parameters: { fields: { type: "string", location: "query" } },
+    resources: {
+      tables: { methods: { getIamPolicy: iamMethod("tables", tables) } },
+      routines: { methods: { getIamPolicy: iamMethod("routines", routines) } },
+      datasets: {
+        methods: {
+          get: {
+            id: "bigquery.datasets.get",
+            httpMethod: "GET",
+            path: "projects/{+projectId}/datasets/{+datasetId}",
+            flatPath: "projects/{projectsId}/datasets/{datasetsId}",
+            parameters: {
+              projectId: { location: "path", required: true, type: "string" },
+              datasetId: { location: "path", required: true, type: "string" },
+            },
+          },
+        },
+      },
+    },
+    schemas: {
+      GetIamPolicyRequest: {
+        type: "object",
+        properties: {
+          options: { type: "object", properties: { requestedPolicyVersion: { type: "integer" } } },
+        },
+      },
+      Policy: { type: "object", properties: { etag: { type: "string" } } },
+    },
+  });
+}
+
+type LoweredOp = Record<string, unknown> & { parameters: Array<Record<string, unknown>> };
+const pathParamNames = (op: LoweredOp | undefined) =>
+  (op?.parameters ?? []).filter((p) => p.in === "path").map((p) => p.name);
+
+describe("Google Discovery adapter: verb+path collisions on reserved resource templates", () => {
+  const TABLES_PATH = "/projects/{projectsId}/datasets/{datasetsId}/tables/{tablesId}:getIamPolicy";
+  const ROUTINES_PATH =
+    "/projects/{projectsId}/datasets/{datasetsId}/routines/{routinesId}:getIamPolicy";
+
+  it("lowers each colliding method on its flatPath, binding every segment as a real path param", () => {
+    const diagnostics: Diagnostic[] = [];
+    const lowered = adaptDiscovery(bigqueryIamDoc(), diagnostics);
+    const tables = lowered.paths?.[TABLES_PATH]?.post as LoweredOp | undefined;
+    const routines = lowered.paths?.[ROUTINES_PATH]?.post as LoweredOp | undefined;
+    expect(tables?.operationId).toBe("bigquery.tables.getIamPolicy");
+    expect(routines?.operationId).toBe("bigquery.routines.getIamPolicy");
+    // The catch-all template is gone: both operations live at distinct coordinates.
+    expect(lowered.paths?.["/{resource}:getIamPolicy"]).toBeUndefined();
+
+    // The flatPath variables ARE the path parameters now, in URL order, and the
+    // expanded `resource` template is dropped (its description rides on each
+    // segment, naming the segment it identifies and the template it came from).
+    expect(pathParamNames(tables)).toEqual(["projectsId", "datasetsId", "tablesId"]);
+    expect(pathParamNames(routines)).toEqual(["projectsId", "datasetsId", "routinesId"]);
+    expect(tables?.parameters.some((p) => p.name === "resource")).toBe(false);
+    const tablesId = tables?.parameters.find((p) => p.name === "tablesId");
+    expect(tablesId).toMatchObject({ in: "path", required: true, schema: { type: "string" } });
+    expect(tablesId?.description).toContain("`tables` identifier of `resource`");
+    expect(tablesId?.description).toContain(
+      "projects/{projectsId}/datasets/{datasetsId}/tables/{tablesId}",
+    );
+    expect(tablesId?.description).toContain("REQUIRED: The resource for which the policy");
+    // Common parameters still ride along with the method's own.
+    expect(tables?.parameters.some((p) => p.name === "fields" && p.in === "query")).toBe(true);
+
+    // Per-method request, response and scopes are kept on each operation.
+    for (const op of [tables, routines]) {
+      expect(JSON.stringify(op?.requestBody)).toContain("#/components/schemas/GetIamPolicyRequest");
+      expect(JSON.stringify(op?.responses)).toContain("#/components/schemas/Policy");
+      expect(op?.security).toEqual([{ oauth2: ["https://www.googleapis.com/auth/bigquery"] }]);
+    }
+
+    // Every `{var}` in every path binds to a declared path parameter: nothing
+    // is left for the wire URL to leak, and no reserved-expansion residue remains.
+    for (const [path, item] of Object.entries(lowered.paths ?? {})) {
+      for (const op of Object.values(item as Record<string, LoweredOp>)) {
+        const bound = new Set(pathParamNames(op));
+        for (const m of path.matchAll(/\{([^{}]+)\}/g))
+          expect(bound.has(m[1] as string)).toBe(true);
+      }
+    }
+    expect(Object.keys(lowered.paths ?? {}).join(" ")).not.toContain("{+");
+
+    // A reserved-template method that does NOT collide keeps `path` (its own
+    // parameter names), exactly as before — flatPath is a collision escape only.
+    expect(lowered.paths?.["/projects/{projectId}/datasets/{datasetId}"]?.get).toBeDefined();
+    expect(Object.keys(lowered.paths ?? {})).not.toContain(
+      "/projects/{projectsId}/datasets/{datasetsId}",
+    );
+
+    // The rebinding is reviewable, not silent — and it is not an error.
+    expect(diagnostics.filter((d) => d.level === "error")).toEqual([]);
+    const rebound = diagnostics.filter((d) => d.code === "discovery_flatpath_binding");
+    expect(rebound.map((d) => d.operationId).sort()).toEqual([
+      "bigquery.routines.getIamPolicy",
+      "bigquery.tables.getIamPolicy",
+    ]);
+    expect(rebound.every((d) => d.level === "info")).toBe(true);
+    expect(
+      rebound.find((d) => d.operationId === "bigquery.tables.getIamPolicy")?.message,
+    ).toContain("resource → projectsId, datasetsId, tablesId");
+  });
+
+  it("still refuses a collision when no flatPath exists to bind it", () => {
+    const spec = bigqueryIamDoc({ pattern: TABLES_PATTERN }, { pattern: ROUTINES_PATTERN });
+    expect(() => adaptDiscovery(spec)).toThrow(
+      /bigquery.tables.getIamPolicy.*bigquery.routines.getIamPolicy/,
+    );
+    const diagnostics: Diagnostic[] = [];
+    const lowered = adaptDiscovery(spec, diagnostics);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        code: "discovery_endpoint_collision",
+        message: expect.stringContaining("declares no flatPath"),
+      }),
+    );
+    // First-seen wins; the second is dropped (and said so), never silently overwritten.
+    const kept = lowered.paths?.["/{resource}:getIamPolicy"]?.post as LoweredOp | undefined;
+    expect(kept?.operationId).toBe("bigquery.tables.getIamPolicy");
+  });
+
+  it("still refuses a collision whose pattern and flatPath cannot be reconciled", () => {
+    // Segment count disagrees: the pattern says two identifiers, flatPath spells three.
+    const shortPattern = bigqueryIamDoc(
+      { pattern: "^projects/[^/]+/tables/[^/]+$", flatPath: TABLES_FLAT },
+      { pattern: "^projects/[^/]+/routines/[^/]+$", flatPath: ROUTINES_FLAT },
+    );
+    let diagnostics: Diagnostic[] = [];
+    adaptDiscovery(shortPattern, diagnostics);
+    expect(diagnostics.filter((d) => d.code === "discovery_flatpath_binding")).toEqual([]);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        code: "discovery_endpoint_collision",
+        message: expect.stringMatching(
+          /flatPath could not bind it: .*has 4 segments but flatPath spells 6/,
+        ),
+      }),
+    );
+
+    // Literals disagree: both patterns name `models`, the flatPaths spell
+    // `tables` and `routines`. Neither binds; the later method is refused, naming why.
+    const wrongLiteral = bigqueryIamDoc(
+      { pattern: "^projects/[^/]+/datasets/[^/]+/models/[^/]+$", flatPath: TABLES_FLAT },
+      { pattern: "^projects/[^/]+/datasets/[^/]+/models/[^/]+$", flatPath: ROUTINES_FLAT },
+    );
+    diagnostics = [];
+    adaptDiscovery(wrongLiteral, diagnostics);
+    expect(diagnostics.filter((d) => d.code === "discovery_flatpath_binding")).toEqual([]);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        code: "discovery_endpoint_collision",
+        message: expect.stringContaining(
+          "segment 'models' does not match flatPath segment 'routines'",
+        ),
+      }),
+    );
+
+    // A flatPath that expands the template but has no pattern to verify it against.
+    const noPattern = bigqueryIamDoc({ flatPath: TABLES_FLAT }, { flatPath: ROUTINES_FLAT });
+    diagnostics = [];
+    adaptDiscovery(noPattern, diagnostics);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        code: "discovery_endpoint_collision",
+        message: expect.stringContaining("declares no pattern to verify it"),
+      }),
+    );
+  });
+
+  it("rebinds the members it can prove and keeps the rest on `path`, losing nothing", () => {
+    const diagnostics: Diagnostic[] = [];
+    const lowered = adaptDiscovery(
+      bigqueryIamDoc(undefined, {
+        pattern: "^projects/[^/]+/routines/[^/]+$",
+        flatPath: ROUTINES_FLAT,
+      }),
+      diagnostics,
+    );
+    const tables = lowered.paths?.[TABLES_PATH]?.post as LoweredOp | undefined;
+    expect(tables?.operationId).toBe("bigquery.tables.getIamPolicy");
+    const routines = lowered.paths?.["/{resource}:getIamPolicy"]?.post as LoweredOp | undefined;
+    expect(routines?.operationId).toBe("bigquery.routines.getIamPolicy");
+    expect(pathParamNames(routines)).toEqual(["resource"]);
+    expect(diagnostics.filter((d) => d.level === "error")).toEqual([]);
+  });
+
+  it("compiles the colliding methods to distinct, resource-named operations with bound inputs", async () => {
+    const air = await compile({ spec: bigqueryIamDoc(), serviceId: "bigquery" });
+    expect(air.diagnostics.filter((d) => d.level === "error")).toEqual([]);
+    expect(air.operations.map((o) => o.sourceRef.operationId).sort()).toEqual([
+      "bigquery.datasets.get",
+      "bigquery.routines.getIamPolicy",
+      "bigquery.tables.getIamPolicy",
+    ]);
+    const tables = air.operations.find(
+      (o) => o.sourceRef.operationId === "bigquery.tables.getIamPolicy",
+    );
+    const routines = air.operations.find(
+      (o) => o.sourceRef.operationId === "bigquery.routines.getIamPolicy",
+    );
+    // The flatPath's concrete segments give each operation its resource — not
+    // the service-level fallback the bare `/{resource}:getIamPolicy` produced.
+    expect(tables?.id).toBe("bigquery.tables.get_iam_policy");
+    expect(routines?.id).toBe("bigquery.routines.get_iam_policy");
+    expect(tables?.mcp.toolName).toBe("bigquery_bigquery_tables_get_iam_policy");
+    expect(routines?.mcp.toolName).toBe("bigquery_bigquery_routines_get_iam_policy");
+    expect(tables?.cli.command).toBe("bigquery tables get_iam_policy");
+    expect(tables?.sourceRef.path).toBe(TABLES_PATH);
+    const inputs = Object.keys(tables?.input.schema?.properties ?? {});
+    expect(inputs).toEqual(expect.arrayContaining(["projects_id", "datasets_id", "tables_id"]));
+    expect(inputs).not.toContain("resource");
+    expect(tables?.input.params.filter((p) => p.in === "path").map((p) => p.name)).toEqual([
+      "projectsId",
+      "datasetsId",
+      "tablesId",
+    ]);
   });
 });
 
