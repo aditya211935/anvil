@@ -54,10 +54,13 @@ import type { OpenApiDocument } from "../parse.js";
 import { graphqlWireBinding } from "./graphql-binding.js";
 import {
   buildSelection,
+  createSchemaRegistry,
   describeCut,
   MAX_SELECTION_DEPTH,
+  MAX_SELECTION_FIELDS,
   requiresArguments,
   responseSchemaFor,
+  type SchemaRegistry,
   scalarSchema,
   TYPENAME_ONLY_SCHEMA,
   typenameOnlySchema,
@@ -173,6 +176,8 @@ interface RootContext {
   /** The component cut positions point at; registered only once one exists. */
   typenameOnlyName: string;
   cutsSeen: boolean;
+  /** Positional response components, shared by every operation of the document. */
+  registry: SchemaRegistry;
 }
 
 /**
@@ -205,6 +210,15 @@ function reportSelection(
   }
   if (selection.cuts.length > 0) {
     ctx.cutsSeen = true;
+    const count = (reason: string) => selection.cuts.filter((c) => c.reason === reason).length;
+    const why = [
+      [count("cycle"), "re-entering a type"],
+      [count("depth"), "at the depth bound"],
+      [count("budget"), "at the field budget"],
+    ]
+      .filter(([n]) => (n as number) > 0)
+      .map(([n, label]) => `${n} ${label}`)
+      .join(", ");
     const sample = selection.cuts.slice(0, 5).map(describeCut).join("; ");
     ctx.diagnostics?.push({
       level: "warning",
@@ -212,12 +226,11 @@ function reportSelection(
       path,
       message:
         `Anvil's compiled document for GraphQL ${kind} '${fieldName}' stops at ` +
-        `${selection.cuts.length} position(s) and selects only __typename there: ${sample}` +
-        `${selection.cuts.length > 5 ? "; …" : ""}. The selection is bounded to ` +
-        `${MAX_SELECTION_DEPTH} levels and never re-enters a type. The response schema marks ` +
-        `each such position as '${ctx.typenameOnlyName}' where it is rendered inline; past the ` +
-        `inline bound it falls back to the type's component, which describes the type rather ` +
-        `than what this position returns.`,
+        `${selection.cuts.length} position(s) (${why}) and selects only __typename there: ` +
+        `${sample}${selection.cuts.length > 5 ? "; …" : ""}. The selection is bounded to ` +
+        `${MAX_SELECTION_DEPTH} levels and ${MAX_SELECTION_FIELDS} fields in total, filled ` +
+        `breadth-first, and never re-enters a type. The response schema marks ` +
+        `each such position as '${ctx.typenameOnlyName}'.`,
     });
   }
 }
@@ -261,7 +274,7 @@ function addRoot(
           description: `${fieldName} result`,
           content: {
             "application/json": {
-              schema: responseSchemaFor(field, selection, ctx.typenameOnlyName),
+              schema: responseSchemaFor(field, selection, ctx.registry),
             },
           },
         },
@@ -301,15 +314,20 @@ export function adaptGraphql(
   const mutation = schema.getMutationType();
   const subscription = schema.getSubscriptionType();
 
+  // A user type could, in principle, carry the stand-in's name; step aside.
+  const typenameOnlyName = schema.getType(TYPENAME_ONLY_SCHEMA)
+    ? `Anvil_${TYPENAME_ONLY_SCHEMA}`
+    : TYPENAME_ONLY_SCHEMA;
   const ctx: RootContext = {
     schema,
     paths: {},
     diagnostics,
-    // A user type could, in principle, carry the stand-in's name; step aside.
-    typenameOnlyName: schema.getType(TYPENAME_ONLY_SCHEMA)
-      ? `Anvil_${TYPENAME_ONLY_SCHEMA}`
-      : TYPENAME_ONLY_SCHEMA,
+    typenameOnlyName,
     cutsSeen: false,
+    registry: createSchemaRegistry(
+      (name) => schema.getType(name) !== undefined || name === typenameOnlyName,
+      typenameOnlyName,
+    ),
   };
   addRoot(ctx, query, "query");
   addRoot(ctx, mutation, "mutation");
@@ -326,6 +344,9 @@ export function adaptGraphql(
     const lowered = namedTypeSchema(schema, namedType);
     if (lowered) schemas[name] = lowered;
   }
+  // Positional response components sit beside the SDL's types: their names
+  // were chosen to step aside from every type name, so nothing is overwritten.
+  Object.assign(schemas, ctx.registry.positional);
   if (ctx.cutsSeen) schemas[ctx.typenameOnlyName] = typenameOnlySchema();
 
   return {

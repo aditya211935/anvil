@@ -830,6 +830,54 @@ describe("materializeSchema", () => {
     expect(withBudget.nodeBudgetLimitedAt).toEqual([]);
   });
 
+  it("charges a memoized named schema at every position it is reused, so output tree size obeys the budget", () => {
+    // The memo returns one shared object for every further use of a named
+    // schema, but `JSON.stringify` writes a copy per position — so a schema
+    // that reaches the same 60-node type from 500 positions is 30,000 output
+    // nodes although only ~560 were ever walked. GitHub's `Query.nodes`
+    // materialized to 49,000 nodes under a 4,000-node budget exactly this way.
+    const fields: Record<string, unknown> = {};
+    for (let j = 0; j < 60; j++) fields[`f${j}`] = { type: "string" };
+    const namedSchemas = { Big: { type: "object", properties: fields } };
+    const positions: Record<string, unknown> = {};
+    for (let i = 0; i < 500; i++) positions[`p${i}`] = { $ref: "#/components/schemas/Big" };
+    const schema = { type: "object", properties: positions };
+
+    const treeSize = (value: unknown): number => {
+      let count = 0;
+      const stack: unknown[] = [value];
+      while (stack.length > 0) {
+        const v = stack.pop();
+        if (v === null || typeof v !== "object") continue;
+        count++;
+        for (const c of Array.isArray(v) ? v : Object.values(v)) stack.push(c);
+      }
+      return count;
+    };
+
+    const budget = 4000;
+    const bounded = materializeSchema(schema, namedSchemas, 1, budget);
+    expect(bounded.nodeBudgetLimitedAt.length).toBeGreaterThan(0);
+    // Every position still has a value — the ones past the budget are typed
+    // stubs (one node each), never a silently dropped property.
+    const out = bounded.schema as { properties: Record<string, Record<string, unknown>> };
+    expect(Object.keys(out.properties)).toHaveLength(500);
+    expect(out.properties.p0).toMatchObject({ type: "object", properties: expect.any(Object) });
+    expect(out.properties.p499).toMatchObject({ type: "object" });
+    expect(out.properties.p499?.properties).toBeUndefined();
+    expect(String(out.properties.p499?.description)).toContain("'Big'");
+    // The output's TREE size is what the budget bounds: budget plus one stub
+    // per remaining position, not 500 copies of the 61-node body.
+    expect(treeSize(bounded.schema)).toBeLessThanOrEqual(budget + 500);
+    expect(treeSize(bounded.schema)).toBeLessThan(500 * 61);
+
+    // With room for every copy (each position: the `$ref` node plus the
+    // 62-node body) the memo is still used and nothing is cut.
+    const roomy = materializeSchema(schema, namedSchemas, 1, 2 + 500 * 63 + 10);
+    expect(roomy.nodeBudgetLimitedAt).toEqual([]);
+    expect(treeSize(roomy.schema)).toBe(1 + 1 + 500 * 62);
+  });
+
   const unionNamed = {
     Flat: { type: "object", properties: { value: { type: "string" } } },
     Nested: { type: "object", properties: { storage: { $ref: "#/components/schemas/Flat" } } },

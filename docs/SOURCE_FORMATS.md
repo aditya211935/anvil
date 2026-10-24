@@ -294,12 +294,21 @@ ask for:
   `graphql_field_omitted_required_args` names each such field, once per
   operation. Expose it through a root field of its own, or give the argument a
   default in the SDL.
-- The selection is **bounded**: four levels deep, and never re-entering a type
-  already on the path. Where it stops, the document selects only `__typename`,
-  and `graphql_selection_truncated` names each position. The response schema
-  renders such a position as the `TypenameOnly` component wherever it is
-  rendered inline; past the inline bound it falls back to the type's component
-  and the diagnostic says so.
+- The selection is **bounded**: four levels deep, at most 300 fields in total,
+  and never re-entering a type already on the path. The field budget is spent
+  breadth-first, so the fields nearest the root are selected first and the cut,
+  when it comes, is at the deepest frontier — an interface with hundreds of
+  implementations (GitHub's `Node`) gets `__typename` for the fragments the
+  budget does not reach, not an unsendable megabyte of document. Where the
+  selection stops, the document selects only `__typename`, and
+  `graphql_selection_truncated` names each position. The response schema
+  renders such a position as the `TypenameOnly` component.
+- A position whose selection differs from its type's full component (because
+  something below it was cut) gets a **positional component** of its own,
+  `<Type>_at_<hash>`, referenced with `$ref` and deduplicated by content. The
+  agent-facing output schema is therefore bounded by the same materialization
+  depth as every REST operation's (one `$ref` hop, then a typed stub), and an
+  exposure profile's `max_ref_depth` deepens both alike.
 
 A schema split across files compiles as one schema. SDL has no import
 statement, so composition *is* concatenation: every SDL document in the snapshot

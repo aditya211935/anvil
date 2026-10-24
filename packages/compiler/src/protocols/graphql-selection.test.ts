@@ -120,6 +120,19 @@ describe("a field with required arguments is absent from document and schema ali
   });
 });
 
+/** The positional component a `$ref` points at, with its name. */
+const positionalOf = (
+  schemas: Record<string, Record<string, unknown>>,
+  schema: Record<string, unknown>,
+  type: string,
+): { name: string; body: Record<string, unknown> } => {
+  const name = String(schema.$ref).replace("#/components/schemas/", "");
+  expect(name).toMatch(new RegExp(`^${type}_at_[0-9a-f]{8}$`));
+  const body = schemas[name];
+  expect(body).toBeDefined();
+  return { name, body: body as Record<string, unknown> };
+};
+
 describe("where the selection stops, the schema stops promising", () => {
   it("cuts a cycle to __typename and renders that position as TypenameOnly", () => {
     const { doc, diagnostics, schemas } = lower(`
@@ -129,8 +142,10 @@ describe("where the selection stops, the schema stops promising", () => {
     const node = opAt(doc, "/graphql/Query/node");
     expect(documentOf(node)).toBe("query Anvil_Node { node { id parent { __typename } } }");
     // The component describes the type; this position returns less than the
-    // type, so the schema is rendered inline and points at the stand-in.
-    expect(responseOf(node)).toEqual({
+    // type, so the schema points at a positional component of its own, whose
+    // cut field points at the stand-in.
+    const { body } = positionalOf(schemas, responseOf(node), "Node");
+    expect(body).toEqual({
       type: "object",
       title: "Node",
       properties: {
@@ -151,7 +166,7 @@ describe("where the selection stops, the schema stops promising", () => {
   });
 
   it("cuts at the depth budget and names the position", () => {
-    const { doc, diagnostics } = lower(`
+    const { doc, diagnostics, schemas } = lower(`
       type A { b: B }
       type B { c: C }
       type C { d: D }
@@ -165,22 +180,43 @@ describe("where the selection stops, the schema stops promising", () => {
     );
     const cut = diagnostics.find((d) => d.code === "graphql_selection_truncated");
     expect(cut?.message).toContain("a.b.c.d.e (depth budget of 4 reached at E)");
-    // Past the inline bound the schema falls back to the component and the
-    // diagnostic says so, rather than pretending the component is exact.
-    expect(cut?.message).toContain("falls back to the type's component");
-    const response = responseOf(opAt(doc, "/graphql/Query/a"));
-    expect(response).toMatchObject({ title: "A" });
-    const b = (response.properties as Record<string, Record<string, unknown>>).b as {
-      properties: Record<string, unknown>;
+    // Every position above the cut is non-canonical, so each is a positional
+    // component — a `$ref` chain down to the stand-in, never inline structure
+    // (which the materialization bounds could not see) and never a fallback
+    // to a type's component (which would promise the fields the cut dropped).
+    let schema = responseOf(opAt(doc, "/graphql/Query/a"));
+    for (const type of ["A", "B", "C", "D"]) {
+      const { body } = positionalOf(schemas, schema, type);
+      expect(body).toMatchObject({ type: "object", title: type });
+      const [field] = Object.values(body.properties as Record<string, Record<string, unknown>>);
+      schema = field as Record<string, unknown>;
+    }
+    expect(schema).toEqual({ $ref: `#/components/schemas/${TYPENAME_ONLY_SCHEMA}` });
+  });
+
+  it("names a positional component for its type and content, deduplicated across operations", () => {
+    const { doc, schemas } = lower(`
+      type Node { id: ID! parent: Node }
+      type Query { node: Node  other: Node  nodes: [Node!]! }
+    `);
+    const first = positionalOf(schemas, responseOf(opAt(doc, "/graphql/Query/node")), "Node");
+    const second = positionalOf(schemas, responseOf(opAt(doc, "/graphql/Query/other")), "Node");
+    const list = responseOf(opAt(doc, "/graphql/Query/nodes")) as {
+      items: Record<string, unknown>;
     };
-    expect(b).toMatchObject({ title: "B" });
-    expect(b.properties.c).toEqual({ $ref: "#/components/schemas/C" });
+    // The same selection at three positions is one component.
+    expect(second.name).toBe(first.name);
+    expect(list.items).toEqual({ $ref: `#/components/schemas/${first.name}` });
+    expect(Object.keys(schemas).filter((n) => n.startsWith("Node_at_"))).toEqual([first.name]);
+    // The SDL's own types are untouched beside it.
+    expect(schemas.Node).toMatchObject({ type: "object", properties: { id: {}, parent: {} } });
   });
 
   it("registers the stand-in only when something was cut, and never over a user type", () => {
     const clean = lower("type P { id: ID! } type Query { p: P }");
     expect(clean.schemas[TYPENAME_ONLY_SCHEMA]).toBeUndefined();
     expect(clean.diagnostics).toEqual([]);
+    expect(Object.keys(clean.schemas)).toEqual(["P"]);
 
     const clash = lower(`
       type TypenameOnly { x: Int }
@@ -189,10 +225,14 @@ describe("where the selection stops, the schema stops promising", () => {
     `);
     expect(clash.schemas.TypenameOnly).toMatchObject({ properties: { x: {} } });
     expect(clash.schemas.Anvil_TypenameOnly).toMatchObject({ properties: { __typename: {} } });
-    const parent = (
-      responseOf(opAt(clash.doc, "/graphql/Query/node")).properties as Record<string, unknown>
-    ).parent;
-    expect(parent).toEqual({ $ref: "#/components/schemas/Anvil_TypenameOnly" });
+    const { body } = positionalOf(
+      clash.schemas,
+      responseOf(opAt(clash.doc, "/graphql/Query/node")),
+      "Node",
+    );
+    expect((body.properties as Record<string, unknown>).parent).toEqual({
+      $ref: "#/components/schemas/Anvil_TypenameOnly",
+    });
   });
 
   it("cuts a member that would re-enter a type, keeping the fragment legal", () => {
@@ -228,11 +268,42 @@ describe("through the whole compiler", () => {
     expect(codes).not.toContain("schema_depth_truncated");
     const op = air.operations.find((o) => o.sourceRef.operationId === "customer");
     expect(op?.sourceRef.binding?.protocol).toBe("graphql");
-    // The agent-facing projection resolves the stand-in at the cut position:
-    // `customer.orders[].customer` is the cycle, and it says __typename only.
+    // The document carries the cut: `customer.orders[].customer` is the cycle.
+    const binding = op?.sourceRef.binding;
+    expect(binding && "document" in binding ? binding.document : "").toContain(
+      "customer { __typename }",
+    );
+    // The agent-facing projection is the position's own fields one hop deep,
+    // exactly as a REST operation's is: the nested position is a typed stub,
+    // not the type's component (which would promise the cut fields) and not
+    // inline structure (which the materialization bound could not see).
     const output = op?.output.schema as Record<string, unknown>;
-    const orders = (output.properties as Record<string, Record<string, unknown>>).orders;
-    const order = orders?.items as Record<string, Record<string, Record<string, unknown>>>;
+    expect(output).toMatchObject({ type: "object", title: "Customer" });
+    const orders = (output.properties as Record<string, Record<string, unknown>>).orders ?? {};
+    const items = (orders.items ?? {}) as Record<string, unknown>;
+    expect(items).toMatchObject({ type: "object" });
+    expect(String(items.description)).toMatch(
+      /^A 'Order_at_[0-9a-f]{8}' object; nested one level deep/,
+    );
+    expect(items.properties).toBeUndefined();
+  });
+
+  it("deepens with the profile's ref depth, like every other protocol", async () => {
+    const { materializeWithin } = await import("../schema-bounds.js");
+    const diagnostics: Diagnostic[] = [];
+    const doc = adaptGraphql(SDL, "shop", diagnostics);
+    const schemas = doc.components?.schemas as Record<string, unknown>;
+    const response = responseOf(opAt(doc, "/graphql/Query/customer"));
+    const deeper = materializeWithin(response, schemas, {
+      maxRefDepth: 3,
+      maxSchemaNodes: 4000,
+      inheritAllOf: false,
+      fitToBudget: false,
+    }).schema as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+    // Customer → Order → the stand-in is three hops: the order's own selection
+    // is visible, and the cycle position resolves to __typename only.
+    const order = deeper.properties?.orders?.items as Record<string, Record<string, unknown>>;
+    expect(order).toMatchObject({ type: "object", title: "Order" });
     expect(order.properties?.customer).toMatchObject({
       properties: { __typename: { type: "string" } },
       required: ["__typename"],
