@@ -1,0 +1,116 @@
+# A Stripe-shaped fixture: an `application/x-www-form-urlencoded` body whose
+# object and array fields the media type's `encoding` map declares as
+# `deepObject` (Stripe's bracket encoding — `metadata[order_id]=o_1`,
+# `expand[0]=customer`), and query parameters declared the same way, including
+# Stripe's `created` range filter that is `anyOf [object, integer]`.
+#
+# Read by the harness tests (loopback self-test and tri-surface conformance) to
+# prove the declared encodings reach the wire identically from the MCP server
+# and the generated CLI, and by the bundle-driver oracle test.
+openapi: 3.0.3
+info:
+  title: Ledger
+  version: "1.0.0"
+servers:
+  - url: https://api.ledger.test
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+security:
+  - basicAuth: []
+paths:
+  /v1/charges:
+    get:
+      operationId: GetCharges
+      summary: List charges
+      parameters:
+        - name: created
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            anyOf:
+              - type: object
+                properties:
+                  gt: { type: integer }
+                  lt: { type: integer }
+                example: { gt: 1700000000, lt: 1700086400 }
+              - type: integer
+        - name: expand
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+            example: [data.customer, data.invoice]
+        - name: limit
+          in: query
+          schema: { type: integer, example: 3 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, example: list }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: ch_1 }
+        "404":
+          description: not found
+  /v1/charges/{charge}/capture:
+    post:
+      operationId: PostChargesChargeCapture
+      summary: Capture a charge
+      parameters:
+        - name: charge
+          in: path
+          required: true
+          schema: { type: string, example: ch_1 }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [amount, metadata]
+              properties:
+                amount: { type: integer, example: 1500 }
+                receipt_email: { type: string, example: ada@example.com }
+                metadata:
+                  type: object
+                  additionalProperties: { type: string }
+                  example: { order_id: o_1, tier: gold }
+                expand:
+                  type: array
+                  items: { type: string }
+                  example: [customer, invoice]
+                transfer_data:
+                  type: object
+                  properties:
+                    amount: { type: integer, example: 1200 }
+                    destination: { type: string, example: acct_1 }
+            encoding:
+              metadata: { style: deepObject, explode: true }
+              expand: { style: deepObject, explode: true }
+              transfer_data: { style: deepObject, explode: true }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, example: ch_1 }
+                  status: { type: string, example: succeeded }
+        "404":
+          description: not found

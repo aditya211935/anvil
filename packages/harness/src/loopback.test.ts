@@ -18,6 +18,22 @@ import { type LoopbackCheck, LoopbackReport, runLoopback } from "./loopback.js";
 const read = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../../examples/${rel}`, import.meta.url)), "utf8");
 
+/** Every check of one id that did not pass, for a failure message that names the culprit. */
+const notPassing = (report: { checks: LoopbackCheck[] }, id: string) =>
+  byId(report, id).filter((c) => c.status !== "pass");
+
+/** A bundle's operation ids by source operationId, so a test names what the spec names. */
+function operationIds(dir: string): Record<string, string> {
+  const air = JSON.parse(readFileSync(join(dir, "air.json"), "utf8")) as {
+    operations: Array<{ id: string; sourceRef: { operationId?: string } }>;
+  };
+  return Object.fromEntries(
+    air.operations.flatMap((o) =>
+      o.sourceRef.operationId ? [[o.sourceRef.operationId, o.id]] : [],
+    ),
+  );
+}
+
 const dirs: string[] = [];
 
 async function buildBundle(spec: string, manifest: string, serviceId: string): Promise<string> {
@@ -206,5 +222,68 @@ describe("loopback self-test (storefront, GraphQL)", () => {
     expect(byId(report, "fidelity", "storefront.product.list")[0]?.status).toBe("pass");
     // Every approved operation — queries and enriched mutations — round-trips.
     expect(report.summary.fail).toBe(0);
+  }, 120_000);
+});
+
+describe("loopback self-test (ledger, Stripe-shaped form encodings)", () => {
+  it("drives deepObject form fields and query parameters to the wire losslessly", async () => {
+    const dir = await buildBundle(
+      "fixtures/ledger-form.yaml",
+      "fixtures/ledger-form.anvil.yaml",
+      "ledger",
+    );
+    const report = await runLoopback(dir);
+    expect(LoopbackReport.parse(report)).toEqual(report);
+    expect(byId(report, "surface")[0]?.status).toBe("pass");
+    // The form body's deepObject fields (`metadata[order_id]`, `expand[0]`,
+    // `transfer_data[destination]`) and the deepObject query parameters
+    // (`created[gt]`, `expand[0]`) all reach the mock as the contract oracle
+    // expects them — a fidelity pass requires a captured, validated request.
+    expect(notPassing(report, "fidelity"), JSON.stringify(report.checks, null, 2)).toEqual([]);
+    expect(byId(report, "fidelity")).toHaveLength(2);
+    expect(byId(report, "error-mapping")[0]?.status).toBe("pass");
+    expect(byId(report, "retry-read")[0]?.status).toBe("pass");
+    expect(report.summary.fail, JSON.stringify(report.checks, null, 2)).toBe(0);
+  }, 120_000);
+});
+
+describe("loopback self-test (kv, gRPC with a streaming RPC)", () => {
+  it("skips the stream with the runtime's reason and still drives the unary call", async () => {
+    const dir = await buildBundle(
+      "fixtures/kv-stream.proto",
+      "fixtures/kv-stream.anvil.yaml",
+      "kv",
+    );
+    const ids = operationIds(dir);
+    const report = await runLoopback(dir);
+    expect(LoopbackReport.parse(report)).toEqual(report);
+    expect(byId(report, "surface")[0]?.status).toBe("pass");
+    // Range: a transcoded unary call the mock facade serves — proven on the wire.
+    expect(byId(report, "fidelity", ids.Range)[0]?.status).toBe("pass");
+    // Watch: a stream no facade can frame — skipped, and the detail says why.
+    const watch = byId(report, "fidelity", ids.Watch)[0];
+    expect(watch?.status).toBe("skipped");
+    expect(watch?.detail).toMatch(/not wire-executable: speaks grpc/);
+    expect(report.summary.fail, JSON.stringify(report.checks, null, 2)).toBe(0);
+  }, 120_000);
+
+  it("passes a surface made only of non-executable operations, with every wire check skipped", async () => {
+    const dir = await buildBundle(
+      "fixtures/kv-stream.proto",
+      "fixtures/kv-stream-only.anvil.yaml",
+      "kv",
+    );
+    const report = await runLoopback(dir);
+    expect(LoopbackReport.parse(report)).toEqual(report);
+    // The surface is still a fact worth proving: the one approved tool is served.
+    expect(byId(report, "surface")[0]?.status).toBe("pass");
+    // Everything that needs a wire request is skipped and says so; nothing fails.
+    for (const id of ["fidelity", "error-mapping", "retry-read", "retry-mutation-guard"]) {
+      const check = byId(report, id)[0];
+      expect(check?.status, id).toBe("skipped");
+      expect(check?.detail, id).toMatch(/wire-executable/);
+    }
+    expect(byId(report, "fidelity")[0]?.detail).toMatch(/speaks grpc/);
+    expect(report.summary).toEqual({ pass: 1, fail: 0, skipped: 4 });
   }, 120_000);
 });

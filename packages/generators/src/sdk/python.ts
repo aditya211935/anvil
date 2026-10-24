@@ -152,7 +152,21 @@ function operationsModule(plan: SdkPlan): string {
             (field) =>
               `{"wireName": ${p(field.wireName)}, "key": ${p(field.key)}, "required": ${field.required ? "True" : "False"}}`,
           )
-          .join(", ")}]}`
+          .join(", ")}]${
+          op.body.encoding
+            ? `, "encoding": {${Object.entries(op.body.encoding)
+                .map(
+                  ([field, encoding]) =>
+                    `${p(field)}: {${[
+                      ...(encoding.style ? [`"style": ${p(encoding.style)}`] : []),
+                      ...(encoding.explode !== undefined
+                        ? [`"explode": ${encoding.explode ? "True" : "False"}`]
+                        : []),
+                    ].join(", ")}}`,
+                )
+                .join(", ")}}`
+            : ""
+        }}`
       : "None";
     return `    ${p(op.names.snake)}: OperationSpec(
         id=${p(op.id)},

@@ -525,6 +525,16 @@ function bodyTypeMatches(schemaType, body) {
   }
 }
 
+/**
+ * Whether a body carries a top-level field. A JSON body carries it as a key; a
+ * form body captured as its wire pairs carries a deepObject field as bracketed
+ * keys (\`metadata[order]\`), which still means the field was sent.
+ */
+function bodyHasField(body, field) {
+  if (body[field] !== undefined && body[field] !== null) return true;
+  return Object.keys(body).some((key) => key.startsWith(field + "["));
+}
+
 /** Validate a matched request against the operation's input contract. */
 function validate(route, query, body, bodyError) {
   const missing = [];
@@ -540,7 +550,7 @@ function validate(route, query, body, bodyError) {
       invalid.push(\`body: expected a JSON \${route.body.schemaType ?? "value"}\`);
     } else if (typeof body === "object" && body !== null && !Array.isArray(body)) {
       for (const f of route.body.requiredFields) {
-        if (body[f] === undefined || body[f] === null) missing.push(\`body.\${f}\`);
+        if (!bodyHasField(body, f)) missing.push(\`body.\${f}\`);
       }
     }
   } else if (body !== undefined) {
@@ -672,13 +682,22 @@ createServer((req, res) => {
       .sort((a, b) => specificity(b.path) - specificity(a.path) || (a.path < b.path ? -1 : 1));
     const route = candidates[0];
 
+    // A form body is captured as exactly the pairs that were on the wire (a
+    // repeated key becomes an array, like the query), so the self-test's
+    // contract oracle compares against the wire and not a reconstruction of
+    // it: \`metadata[order]=123\` is recorded under that very key.
     let body;
     let bodyError;
+    const mediaType = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
     if (rawBody.length > 0) {
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        bodyError = "request body is not valid JSON";
+      if (mediaType === "application/x-www-form-urlencoded") {
+        body = queryCapture(new URLSearchParams(rawBody));
+      } else {
+        try {
+          body = JSON.parse(rawBody);
+        } catch {
+          bodyError = "request body is not valid JSON";
+        }
       }
     }
     const query = url.searchParams;

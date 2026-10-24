@@ -566,9 +566,12 @@ def build_request(
     if has_body:
         content_type = (spec.body or {}).get("contentType") or "application/json"
         headers["content-type"] = content_type
-        # Compact separators so the body bytes match what the other generated
-        # SDKs send for the same input — one contract, one request.
-        request["body"] = json.dumps(body_value, separators=(",", ":")).encode("utf-8")
+        if spec.body is not None and _body_encoding_of(content_type) == "form":
+            request["body"] = form_body(spec.id, spec.body, body_value)
+        else:
+            # Compact separators so the body bytes match what the other generated
+            # SDKs send for the same input — one contract, one request.
+            request["body"] = json.dumps(body_value, separators=(",", ":")).encode("utf-8")
     return request
 
 

@@ -224,6 +224,62 @@ describe("parseArgs: `--flag=value` equals-syntax", () => {
   });
 });
 
+describe("structured parameter flags", () => {
+  it("reads an array or object parameter as JSON (or a comma list) and serializes it by the declared style", async () => {
+    const spec = `openapi: 3.0.0
+info: { title: ledger, version: 1.0.0 }
+paths:
+  /charges:
+    get:
+      operationId: listCharges
+      tags: [charges]
+      parameters:
+        - name: expand
+          in: query
+          style: deepObject
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - name: created
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            anyOf:
+              - { type: object, properties: { gt: { type: integer }, lt: { type: integer } } }
+              - { type: integer }
+        - name: ids
+          in: query
+          schema: { type: array, items: { type: integer } }
+      responses: { '200': { description: ok } }
+`;
+    const doc = await compile({ spec, serviceId: "ledger" });
+    for (const op of doc.operations) op.state = "approved";
+    const command = doc.operations[0]?.cli.command.split(" ").slice(1) ?? [];
+    const run = async (...flags: string[]) => {
+      const io = bufferIO();
+      const code = await runToolCli(doc, [...command, ...flags, "--dry-run"], {
+        env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
+        io,
+      });
+      expect(code, io.text()).toBe(0);
+      return decodeURIComponent((JSON.parse(io.stdout.join("\n")) as { url: string }).url);
+    };
+    // JSON on the command line is the structured value the MCP tool would get
+    // as an args object, and the declared deepObject style brackets it the
+    // same way on both surfaces — the one wire request the conformance gate
+    // demands.
+    expect(
+      await run("--expand", '["customer","invoice"]', "--created", '{"gt":1,"lt":2}'),
+    ).toContain("expand[0]=customer&expand[1]=invoice&created[gt]=1&created[lt]=2");
+    // The scalar branch of the union, as a number rather than the text "7".
+    expect(await run("--created", "7")).toContain("created=7");
+    // An array of scalars also takes the comma shorthand, items typed by the schema.
+    expect(await run("--ids", "1,2", "--expand", "customer")).toContain(
+      "expand[0]=customer&ids=1&ids=2",
+    );
+  });
+});
+
 describe("FIXED: a value-carrying flag is no longer silently coerced to boolean `true`", () => {
   // The file's own comment (near BOOLEAN_FLAGS, tool-cli.ts ~line 71) explains
   // exactly this failure mode for --schema/--examples/--errors/--policy/--explain

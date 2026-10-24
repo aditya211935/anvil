@@ -31,7 +31,12 @@ import {
   wireExecutability,
   wireProtocolFor,
 } from "@anvil/air";
-import { coerceWireValues, decodeRequestBody, decodeUndeclared } from "./body-decoding.js";
+import {
+  coerceWireValues,
+  decodeDeepObject,
+  decodeRequestBody,
+  decodeUndeclared,
+} from "./body-decoding.js";
 import { declaredResponse } from "./declared-shape.js";
 import { fillFixedFields, pageEnvelope } from "./page-envelope.js";
 import { servesItems } from "./provider.js";
@@ -677,6 +682,16 @@ function liftInput(
     return undefined;
   };
   for (const p of op.input.params) {
+    if (p.in === "query" && p.style === "deepObject") {
+      // Declared deepObject: the runtime sent `created[gt]=1&expand[0]=x`, the
+      // inverse of which is one structured value, not one key per bracket.
+      const pairs = Object.entries(query).flatMap(([key, values]) =>
+        values.map((value): [string, string] => [key, value]),
+      );
+      const value = decodeDeepObject(p.name, p.schema, pairs);
+      if (value !== undefined) input[agentPropKey(p)] = value;
+      continue;
+    }
     const raw = wireValue(p);
     if (raw !== undefined) input[agentPropKey(p)] = coerceWireValues(p.schema, raw, true);
   }

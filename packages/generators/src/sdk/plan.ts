@@ -191,6 +191,8 @@ export interface SdkOperation {
     contentType: string;
     projection: "fields" | "whole";
     fields: SdkField[];
+    /** Per-field wire encodings the source declared for a form body, by wire name. */
+    encoding?: Record<string, SdkFieldEncoding>;
   };
   idempotency: SdkIdempotency;
   retry: SdkRetry;
@@ -463,6 +465,12 @@ function paramsOf(op: Operation): SdkParam[] {
     }));
 }
 
+/** How one form-body field goes on the wire, when the source declared it. */
+export interface SdkFieldEncoding {
+  style?: string;
+  explode?: boolean;
+}
+
 function bodyOf(op: Operation): SdkOperation["body"] {
   const body = op.input.body;
   if (!body) return undefined;
@@ -471,6 +479,7 @@ function bodyOf(op: Operation): SdkOperation["body"] {
     required: body.required,
     contentType: body.contentType,
     projection: body.projection,
+    ...(body.encoding ? { encoding: body.encoding } : {}),
     fields:
       body.projection === "fields"
         ? body.fields

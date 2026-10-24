@@ -6,14 +6,17 @@ import { fileURLToPath } from "node:url";
 import {
   type AirDocument,
   agentPropKey,
+  bodyEncodingFor,
   ladderPlan,
   type Operation,
   operationBusinessInputCliFlag,
   operationSafetyInputKeys,
   propKey,
   resolveIdempotencyCarrier,
+  serializeFormField,
   serializeQueryParam,
   serializeSimpleParam,
+  wireExecutability,
 } from "@anvil/air";
 import { exampleInput } from "@anvil/generators";
 import {
@@ -331,8 +334,11 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
     // boolean *field* (e.g. an Edm.Boolean property) is a value flag `--f true`,
     // not a bare toggle — the tool CLI coerces it back; only the injected
     // `confirm`/`dry-run` control toggles are bare, and those are never fields
-    // iterated here.
-    out.push(flag, String(value));
+    // iterated here. A structured value (an array or object parameter —
+    // Stripe's deepObject `expand` and `created`) travels as JSON, the CLI's
+    // convention for any input that is not one scalar, so the CLI receives the
+    // identical logical value the MCP tool receives as an args object.
+    out.push(flag, typeof value === "object" ? JSON.stringify(value) : String(value));
   };
   for (const p of op.input.params) emit(p.in, p.name);
   if (op.input.body?.projection === "fields") {
@@ -348,14 +354,51 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
 }
 
 /**
- * A GET operation that still carries a request body cannot be sent by fetch at
- * all; probing one for error/retry behavior would only re-report its fidelity
- * failure under the wrong check id. Current adapters emit truthful POST
- * methods, so this only guards bundles compiled before that change.
+ * Why the hermetic lanes cannot put this operation on the wire, or undefined
+ * when they can. Both the loopback self-test and the conformance harness skip
+ * — never fail — the checks that need a wire request for such an operation,
+ * and say why in the check's detail.
+ *
+ * Two reasons exist. The runtime's own transport gate (`wireExecutability`):
+ * the lanes declare the generated mock as a protocol facade, which answers a
+ * *coordinates* refusal (a transcoded gRPC method, a bridged queue exchange)
+ * but can never answer a *framing* one — a streaming RPC, a gRPC method whose
+ * `google.api.http` rule the compiler declined, a subscription with no bound.
+ * The runtime refuses those with `unsupported_operation` even under the
+ * facade, which the compiler already reported as `unexecutable_transport`;
+ * failing a self-test on the same fact a third time would make an honestly
+ * compiled bundle look broken. And the legacy GET-with-body shape, which fetch
+ * cannot send at all: current adapters emit truthful POST methods, so that
+ * branch only guards bundles compiled before that change.
  */
-export function wireable(op: Operation): boolean {
+export function wireRefusal(op: Operation): string | undefined {
+  const verdict = wireExecutability(op);
+  if (!verdict.ok && verdict.scope === "framing") {
+    return `not wire-executable: speaks ${verdict.protocol} — ${verdict.reason}`;
+  }
   const method = (op.sourceRef.method ?? "get").toLowerCase();
-  return method !== "get" || (!op.input.body && !op.input.params.some((p) => p.in === "body"));
+  if (method === "get" && (carriesBody(op) || op.input.params.some((p) => p.in === "body"))) {
+    return "not wire-executable: a GET cannot carry the request body this operation declares";
+  }
+  return undefined;
+}
+
+/**
+ * Whether a declared request body can ever put bytes on the wire. Stripe
+ * declares an optional `application/x-www-form-urlencoded` body with an empty
+ * schema on every GET; it projects to zero fields, so the executor binds
+ * nothing and sends no body at all — the declaration is noise, not a body a
+ * GET would have to carry.
+ */
+function carriesBody(op: Operation): boolean {
+  const body = op.input.body;
+  if (!body) return false;
+  return body.required || body.projection !== "fields" || body.fields.length > 0;
+}
+
+/** Whether the hermetic lanes can drive this operation to the wire; see `wireRefusal`. */
+export function wireable(op: Operation): boolean {
+  return wireRefusal(op) === undefined;
 }
 
 export interface ExpectedWire {
@@ -363,6 +406,11 @@ export interface ExpectedWire {
   /** Same shape as `CaptureRecord.query`: a repeated key is an array. */
   query: Record<string, string | string[]>;
   headers: Record<string, string>;
+  /**
+   * A JSON body as the value sent; a form body as the mock captures it — the
+   * wire pairs keyed by their exact on-wire names (`metadata[order]`), a
+   * repeated key an array.
+   */
   body: unknown;
 }
 
@@ -459,7 +507,31 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
         break;
     }
   }
+  if (b && bodyEncodingFor(b.contentType) === "form_urlencoded" && isRecord(body)) {
+    body = expectedFormBody(b.encoding, body);
+  }
   return { path, query, headers, body };
+}
+
+/**
+ * The form body the contract promises, in the shape the mock captures it: the
+ * wire pairs, serialized field by field through the same `@anvil/air` table the
+ * runtime binds through, so a deepObject field is expected as its bracketed
+ * keys. A field the table refuses is left off, as with a refused parameter —
+ * the runtime refuses the whole call, so no capture exists to compare against.
+ */
+function expectedFormBody(
+  encodings: Record<string, { style?: string; explode?: boolean }> | undefined,
+  fields: Record<string, unknown>,
+): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === undefined || value === null) continue;
+    const encoding = encodings?.[name] as Parameters<typeof serializeFormField>[1];
+    const bound = serializeFormField(name, encoding, value);
+    if (bound.ok) for (const [key, text] of bound.pairs) addQueryPair(out, key, text);
+  }
+  return out;
 }
 
 /** The mock's query capture shape from a URL: a repeated key becomes an array. */

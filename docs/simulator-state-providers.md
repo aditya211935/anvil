@@ -120,7 +120,10 @@ compile costs for five vendor specs are in
   `variables`).
 - **Body.** Read in the content type the operation declares, after the route
   is chosen: JSON; `application/x-www-form-urlencoded`, with each field typed
-  by its schema and a repeated key read as an array; or `multipart/form-data`,
+  by its schema, a repeated key read as an array, and a field the contract
+  declares `deepObject` folded back from its bracketed keys (`metadata[order]`
+  becomes `metadata: { order }`, as a `deepObject` query parameter does); or
+  `multipart/form-data`,
   where a file part (or a field declared as binary) becomes a base64 string,
   a JSON part is parsed, and a text part is typed by its schema. A body that
   does not decode is a `400` with `validation_error`. Top-level body fields

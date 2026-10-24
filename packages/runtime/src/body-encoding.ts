@@ -6,6 +6,7 @@ import {
   mediaTypeOf,
   type Operation,
   SUPPORTED_BODY_CONTENT_TYPES,
+  serializeFormField,
 } from "@anvil/air";
 import { AnvilError } from "./errors.js";
 import type { HttpRequest } from "./transport.js";
@@ -83,8 +84,12 @@ function fieldSchema(op: Operation, name: string): JsonSchema | undefined {
 }
 
 /**
- * `application/x-www-form-urlencoded`, with `URLSearchParams` semantics: an
- * array repeats its key, and anything nested has no form encoding at all.
+ * `application/x-www-form-urlencoded`. Each field is serialized by the one
+ * table in `@anvil/air` (`serializeFormField`): a scalar as `name=value`, an
+ * array of scalars as a repeated key, and a field the source gave an
+ * `encoding` for by that declared style — Stripe's `metadata[order]=123` and
+ * `expand[0]=charges` under `deepObject`. A nested value with no declared
+ * encoding is refused rather than sent on a guess.
  */
 function encodeForm(op: Operation, value: unknown, contentType: string, traceId: string): string {
   if (!isRecord(value)) {
@@ -96,22 +101,13 @@ function encodeForm(op: Operation, value: unknown, contentType: string, traceId:
       traceId,
     );
   }
+  const encodings = op.input.body?.encoding;
   const form = new URLSearchParams();
   for (const [name, item] of Object.entries(value)) {
     if (item === undefined || item === null) continue;
-    if (isPrimitive(item)) {
-      form.append(name, String(item));
-    } else if (Array.isArray(item) && item.every(isPrimitive)) {
-      for (const entry of item) form.append(name, String(entry));
-    } else {
-      throw unencodableField(
-        op,
-        contentType,
-        name,
-        "a nested object (or an array of objects) has no form-urlencoded representation",
-        traceId,
-      );
-    }
+    const bound = serializeFormField(name, encodings?.[name], item);
+    if (!bound.ok) throw unencodableField(op, contentType, name, bound.reason, traceId);
+    for (const [key, text] of bound.pairs) form.append(key, text);
   }
   return form.toString();
 }

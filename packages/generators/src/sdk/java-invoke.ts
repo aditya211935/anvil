@@ -437,12 +437,15 @@ ${wireFidelityCore.java}
     HttpRequest.BodyPublisher publisher = HttpRequest.BodyPublishers.noBody();
     String bodyText = null;
     if (hasBody) {
-      headers.put(
-          "content-type",
+      String contentType =
           spec.body == null || spec.body.contentType.isEmpty()
               ? "application/json"
-              : spec.body.contentType);
-      bodyText = Json.write(bodyValue);
+              : spec.body.contentType;
+      headers.put("content-type", contentType);
+      bodyText =
+          spec.body != null && "form".equals(bodyEncodingOf(contentType))
+              ? formBody(spec.id, spec.body, bodyValue)
+              : Json.write(bodyValue);
       publisher = HttpRequest.BodyPublishers.ofString(bodyText);
     }
     HttpRequest.Builder builder =
