@@ -112,10 +112,13 @@ The expanded contracts exposed and now exercise these compiler changes:
    OAuth credential query carriers are excluded from ordinary agent inputs when
    the document uses OAuth.
 4. **Ambiguous Discovery templates:** distinct methods sharing the same verb
-   and reserved-resource path now produce `discovery_endpoint_collision` instead
-   of silently overwriting one another. Google Admin Directory and Places expose
-   this remaining adapter limitation. Full support needs distinct resource
-   bindings; the current change diagnoses loss rather than inventing routes.
+   and reserved-resource path (Google Admin Directory's `printers` and
+   `printServers`, Places' `get` and `photos.getMedia`, BigQuery's IAM methods)
+   are lowered on their `flatPath`, with the flatPath variables bound as path
+   parameters once the resource parameter's `pattern` proves the segment
+   structure. Each rebinding is an `info` `discovery_flatpath_binding`
+   diagnostic. A collision the pattern and flatPath cannot reconcile still
+   produces `discovery_endpoint_collision` rather than inventing a route.
 5. **DocuSign serialization:** the AIR YAML fallback emits JSON-compatible
    double-quoted strings so descriptions with whitespace-only lines retain their
    bytes through the YAML round-trip.

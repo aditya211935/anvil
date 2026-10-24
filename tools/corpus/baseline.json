@@ -130,7 +130,7 @@
     "bigquery": {
       "compileMs": 1176,
       "airBytes": 1704388,
-      "opCount": 42
+      "opCount": 47
     },
     "datadog": {
       "compileMs": 9556,
