@@ -4,13 +4,13 @@ import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type AgentNamedInput,
   type AirDocument,
   agentPropKey,
   ladderPlan,
   type Operation,
   operationBusinessInputCliFlag,
   operationSafetyInputKeys,
-  propKey,
   resolveIdempotencyCarrier,
   serializeQueryParam,
   serializeSimpleParam,
@@ -313,17 +313,23 @@ export async function probeVirtualOboWiring(
 /**
  * The CLI flags that carry a seeded input object to the generated tool CLI.
  * This is the exact inverse of the CLI engine's flag→input mapping (tool-cli
- * reads `cliFlag(name)` and writes `propKey(name)`), derived from the very same
+ * reads the input's CLI flag and writes its `agentPropKey`), derived from the very same
  * operation contract — so the CLI surface receives the identical logical input
  * the MCP surface receives as a tool-args object. Boolean-valued fields are
  * skipped (they map to bare `--flag` toggles the caller adds explicitly).
  */
 export function cliFlagsFor(op: Operation, args: Record<string, unknown>): string[] {
   const out: string[] = [];
-  const emit = (location: Parameters<typeof operationBusinessInputCliFlag>[1], name: string) => {
-    const flag = operationBusinessInputCliFlag(op, location, name);
+  const emit = (
+    location: Parameters<typeof operationBusinessInputCliFlag>[1],
+    node: AgentNamedInput,
+  ) => {
+    const flag = operationBusinessInputCliFlag(op, location, node.name);
     if (!flag) return;
-    const value = args[propKey(name)];
+    // The seeded object is keyed by the agent-facing key, which differs from
+    // the snake-cased wire name whenever the compiler re-projected a colliding
+    // input (Twilio's `EndTime<` → `end_time_lt`).
+    const value = args[agentPropKey(node)];
     if (value === undefined || value === null) return;
     // Use @anvil/air's real cliFlag, never a local re-implementation — the CLI
     // engine parses exactly these flags, and only the shared function handles
@@ -334,9 +340,9 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
     // iterated here.
     out.push(flag, String(value));
   };
-  for (const p of op.input.params) emit(p.in, p.name);
+  for (const p of op.input.params) emit(p.in, p);
   if (op.input.body?.projection === "fields") {
-    for (const f of op.input.body.fields) emit("body", f.name);
+    for (const f of op.input.body.fields) emit("body", f);
   } else if (op.input.body && args.body !== undefined && args.body !== null) {
     out.push("--body", JSON.stringify(args.body));
   }

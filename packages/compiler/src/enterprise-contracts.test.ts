@@ -83,12 +83,22 @@ describe("enterprise contract regressions", () => {
     expect(air.operations[0]?.input.body?.projection).toBe("fields");
   });
 
-  it("blocks an existing parameter that would collide with the whole-body envelope", async () => {
+  it("moves an existing parameter off the whole-body envelope instead of blocking", async () => {
     const air = await compile({ spec: contract({ body: { type: "string" } }, "body") });
+    expect(air.diagnostics.filter((d) => d.code === "duplicate_agent_input_name")).toEqual([]);
     expect(air.diagnostics).toContainEqual(
-      expect.objectContaining({ code: "duplicate_agent_input_name", level: "error" }),
+      expect.objectContaining({ code: "agent_input_name_disambiguated", level: "info" }),
     );
-    expect(air.operations[0]?.state).toBe("blocked");
+    const op = air.operations[0];
+    expect(op?.state).not.toBe("blocked");
+    // The path parameter keeps its wire name and takes a location-suffixed
+    // agent key; the `body` envelope keeps the reserved key.
+    expect(op?.input.params.map((p) => [p.name, p.agentName])).toEqual([["body", "body_path"]]);
+    expect(Object.keys(op?.input.schema?.properties ?? {})).toEqual([
+      "body_path",
+      "body",
+      "confirm",
+    ]);
   });
 
   it("refuses a lossy Discovery lowering when two methods share a resource template", async () => {

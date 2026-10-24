@@ -23,6 +23,7 @@ import { applyDialectAdjustment, detectNamingDialect } from "./dialect.js";
 import { measureAirDisclosure } from "./disclosure-cost.js";
 import { resolveEffectReferences, validateEffectContracts } from "./effects.js";
 import { applyHarObservedPosture } from "./har-posture.js";
+import { resolveInputNameCollisions } from "./input-names.js";
 import {
   type AnvilManifest,
   airAuthProviderToManifest,
@@ -485,11 +486,12 @@ async function buildAir(
   ].sort();
 
   // Every manifest, overlay and auth patch has run: drop the union member
-  // names they could select by, then attach the assembled input JSON Schema.
-  for (const op of operations) {
-    stripComponentNames(op);
-    op.input.schema = operationInputSchema(op);
-  }
+  // names they could select by, give colliding inputs distinct agent-facing
+  // names (a chosen `agentName` is already in place and wins), then attach
+  // the assembled input JSON Schema.
+  for (const op of operations) stripComponentNames(op);
+  const inputNameDiagnostics = resolveInputNameCollisions(operations);
+  for (const op of operations) op.input.schema = operationInputSchema(op);
 
   // Effect contracts name other operations by any manifest spelling; pin them
   // to AIR ids, then check them across the whole surface (ADR-0030).
@@ -595,6 +597,7 @@ async function buildAir(
         ...serviceAuthDefaults.diagnostics,
         ...diagnostics,
         ...namingDiagnostics,
+        ...inputNameDiagnostics,
         ...workflowDiagnostics,
         ...manifestEntryDiagnostics,
         ...queryTemplateDiagnostics,
