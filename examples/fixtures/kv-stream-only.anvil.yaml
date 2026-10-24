@@ -1,0 +1,12 @@
+# Manifest for kv-stream.proto: an approved surface made entirely of the one
+# operation the runtime cannot put on the wire (Temporal's and etcd's situation
+# in the nightly corpus). The self-test must still pass — surface proven, the
+# wire checks explicitly skipped with the reason — rather than fail three times
+# on a fact the compiler already reported.
+service:
+  name: kv
+  display_name: KV gRPC Service
+  owner: harness-fixtures
+
+operations:
+  Watch: { state: approved }

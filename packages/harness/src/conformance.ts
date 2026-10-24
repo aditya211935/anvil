@@ -19,7 +19,7 @@ import {
   startMockServer,
   trim,
   type WireLoss,
-  wireable,
+  wireRefusal,
   withoutConfirmationInput,
   withTimeout,
 } from "./bundle-driver.js";
@@ -308,8 +308,14 @@ export async function runConformance(
         }
         continue;
       }
-      if (!wireable(op)) {
-        checks.push(skip("wire-agreement", op, surfaces, "operation is not wire-executable"));
+      // Skipped with the reason, never failed: the runtime refuses such a call
+      // on every surface alike (the compiler reported it as
+      // `unexecutable_transport`), so there is no wire request to compare and
+      // nothing the surfaces could disagree about.
+      const refusal = wireRefusal(op);
+      if (refusal !== undefined) {
+        checks.push(skip("wire-agreement", op, surfaces, refusal));
+        if (op.confirmation.required) checks.push(skip("gate-agreement", op, surfaces, refusal));
         continue;
       }
       checks.push(await checkWireAgreement(mcpCall, cli, ctl, op, cliEnabled));

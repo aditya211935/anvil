@@ -153,6 +153,47 @@ describe("generated mock server", () => {
     expect(body.error.missing).toContain("body.currency");
   });
 
+  it("captures a form-urlencoded body as its wire pairs and reads required fields through brackets", async () => {
+    await reset();
+    // The contract declares JSON, but the mock reads a body by the content
+    // type it arrived in: a form is captured as exactly the pairs on the wire,
+    // a repeated key as an array, and a deepObject field (`metadata[order]`)
+    // under its bracketed name — so a self-test compares against the wire,
+    // not a reconstruction of it. The bracketed field still counts as sent.
+    const res = await fetch(`${base}/payments/p_1/refunds`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "amount=100&currency=USD&expand%5B0%5D=customer&tags=a&tags=b",
+    });
+    expect(res.status).toBe(201);
+    const [req] = await capture();
+    if (!req) throw new Error("mock server captured no request");
+    expect(req.validation.ok).toBe(true);
+    expect(req.body).toEqual({
+      amount: "100",
+      currency: "USD",
+      "expand[0]": "customer",
+      tags: ["a", "b"],
+    });
+
+    // A required field present only as bracketed keys is present.
+    const bracketed = await fetch(`${base}/payments/p_1/refunds`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "amount=100&currency%5Bcode%5D=USD",
+    });
+    expect(bracketed.status).toBe(201);
+    // And a required field absent from a form body is still missing.
+    const missing = await fetch(`${base}/payments/p_1/refunds`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "amount=100",
+    });
+    expect(missing.status).toBe(400);
+    const body = (await missing.json()) as { error: { missing: string[] } };
+    expect(body.error.missing).toContain("body.currency");
+  });
+
   it("rejects an unparseable JSON body as invalid", async () => {
     const res = await fetch(`${base}/payments/p_1/refunds`, {
       method: "POST",

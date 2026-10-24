@@ -68,6 +68,46 @@ paths:
         - { name: page, in: cookie, schema: { type: integer } }
       responses:
         "200": { description: ok, content: { application/json: { schema: { type: object } } } }
+  /charges:
+    get:
+      operationId: listCharges
+      parameters:
+        - name: created
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            anyOf:
+              - { type: object, properties: { gt: { type: integer }, lt: { type: integer } } }
+              - { type: integer }
+        - name: expand
+          in: query
+          style: deepObject
+          explode: true
+          schema: { type: array, items: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object } } } }
+    post:
+      operationId: createCharge
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: integer }
+                metadata: { type: object, additionalProperties: { type: string } }
+                items:
+                  type: array
+                  items: { type: object, properties: { price: { type: string }, quantity: { type: integer } } }
+                plain: { type: object }
+            encoding:
+              metadata: { style: deepObject, explode: true }
+              items: { style: deepObject, explode: true }
+      responses:
+        "201": { description: created, content: { application/json: { schema: { type: object } } } }
 `;
 
 let air: AirDocument;
@@ -128,6 +168,47 @@ describe("request bodies are read in the content type the operation declares", (
         // A form repeats its key for an array; a comma is part of a value.
         scope: ["read", "write,admin"],
       });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("folds a declared deepObject back into its value, in a form body and in the query", async () => {
+    const s = await serving();
+    try {
+      // The runtime's bracket encoding, inverted by the declaration that
+      // produced it: an object by key, an array of objects by index, each leaf
+      // typed by its schema path. A bracketed key under a field the contract
+      // did NOT declare deepObject stays the key it is.
+      const res = await fetch(`${s.url}/charges`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body:
+          "amount=1500&metadata%5Border%5D=o_1&metadata%5Btier%5D=gold" +
+          "&items%5B0%5D%5Bprice%5D=p_1&items%5B0%5D%5Bquantity%5D=2&items%5B1%5D%5Bprice%5D=p_2" +
+          "&plain%5Bx%5D=1",
+      });
+      expect(res.status).toBe(201);
+      expect(s.provider.seen[0]?.body).toEqual({
+        amount: 1500,
+        metadata: { order: "o_1", tier: "gold" },
+        items: [{ price: "p_1", quantity: 2 }, { price: "p_2" }],
+        "plain[x]": "1",
+      });
+
+      // Query parameters: the range object's branch of the anyOf by key, the
+      // array by index; and the scalar branch as the bare scalar.
+      const ranged = await fetch(
+        `${s.url}/charges?created%5Bgt%5D=1&created%5Blt%5D=2&expand%5B0%5D=a&expand%5B1%5D=b`,
+      );
+      expect(ranged.status).toBe(200);
+      expect(s.provider.seen[1]?.params.query).toEqual({
+        created: { gt: 1, lt: 2 },
+        expand: ["a", "b"],
+      });
+      const exact = await fetch(`${s.url}/charges?created=7`);
+      expect(exact.status).toBe(200);
+      expect(s.provider.seen[2]?.params.query).toEqual({ created: 7 });
     } finally {
       await s.close();
     }

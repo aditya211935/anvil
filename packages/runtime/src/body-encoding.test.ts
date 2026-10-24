@@ -103,6 +103,66 @@ describe("form-urlencoded bodies", () => {
     expect(sent?.body).toBe("email=a+b%40x.io&tags=x&tags=y%26z&count=3");
   });
 
+  it("encodes a field by its declared encoding: deepObject brackets, indexed arrays", async () => {
+    // Stripe's shape: a form body whose object and array fields the spec
+    // declares as deepObject, so the wire gets `metadata[order]=…` and
+    // `expand[0]=…` rather than a refusal.
+    const transport = new MockTransport(() => ok({ id: "ch_1" }));
+    const { context } = ctx(transport);
+    const res = await execute(
+      op({
+        contentType: "application/x-www-form-urlencoded",
+        schema: { type: "object" },
+        encoding: {
+          metadata: { style: "deepObject", explode: true },
+          expand: { style: "deepObject", explode: true },
+          shipping: { style: "deepObject", explode: true },
+          ids: { style: "pipeDelimited" },
+        },
+      }),
+      {
+        input: {
+          body: {
+            amount: 100,
+            metadata: { order: "o 1", tier: 2 },
+            expand: ["charge", "customer"],
+            shipping: { address: { city: "Oslo" }, name: "Ada" },
+            ids: ["a", "b"],
+            tags: ["x", "y"],
+          },
+        },
+      },
+      context,
+    );
+    expect(res.outcome).toBe("success");
+    const sent = transport.requests[0];
+    expect(sent?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+    expect(sent?.body).toBe(
+      "amount=100&metadata%5Border%5D=o+1&metadata%5Btier%5D=2&expand%5B0%5D=charge&expand%5B1%5D=customer" +
+        "&shipping%5Baddress%5D%5Bcity%5D=Oslo&shipping%5Bname%5D=Ada&ids=a%7Cb&tags=x&tags=y",
+    );
+  });
+
+  it("still refuses a nested object under a field the source declared no encoding for", async () => {
+    const transport = new MockTransport(() => ok({ ok: true }));
+    const { context, reads } = ctx(transport);
+    const res = await execute(
+      op({
+        contentType: "application/x-www-form-urlencoded",
+        encoding: { metadata: { style: "deepObject" } },
+      }),
+      { input: { body: { metadata: { a: "1" }, address: { city: "Oslo" } } } },
+      context,
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") throw new Error("expected a refusal");
+    expect(res.envelope.error.code).toBe("unsupported_operation");
+    expect(res.envelope.error.message).toContain("'address'");
+    expect(res.envelope.error.message).toContain("encoding");
+    expect(transport.requests).toHaveLength(0);
+    expect(reads()).toBe(0);
+  });
+
   it("refuses a nested object before any credential is read", async () => {
     const transport = new MockTransport(() => ok({ ok: true }));
     const { context, reads } = ctx(transport);

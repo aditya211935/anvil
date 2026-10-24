@@ -61,6 +61,65 @@ describe("parameter serialization survives lowering", () => {
   });
 });
 
+describe("request body field encodings", () => {
+  it("carries a form body's declared per-field style/explode, and nothing when undeclared", async () => {
+    const air = await compile({
+      serviceId: "fid",
+      spec: spec(`
+  /charges:
+    post:
+      operationId: createCharge
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                amount: { type: integer }
+                metadata: { type: object, additionalProperties: { type: string } }
+                expand: { type: array, items: { type: string } }
+                shipping: { type: object, properties: { city: { type: string } } }
+            encoding:
+              metadata: { style: deepObject, explode: true }
+              expand: { style: deepObject, explode: true }
+              shipping: { style: somethingElse }
+      responses: { "200": { description: ok } }
+  /plain:
+    post:
+      operationId: plainForm
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { a: { type: string } } }
+      responses: { "200": { description: ok } }
+  /json:
+    post:
+      operationId: jsonBody
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { a: { type: object } } }
+            encoding:
+              a: { style: deepObject }
+      responses: { "200": { description: ok } }
+`),
+    });
+    const body = (id: string) =>
+      air.operations.find((o) => o.sourceRef.operationId === id)?.input.body;
+    // Declared encodings survive lowering, keyed by exact wire name; a style
+    // OpenAPI does not define is dropped like an unknown parameter style.
+    expect(body("createCharge")?.encoding).toEqual({
+      metadata: { style: "deepObject", explode: true },
+      expand: { style: "deepObject", explode: true },
+    });
+    // Nothing declared: the field is absent, so the document hashes as before.
+    expect(body("plainForm")?.encoding).toBeUndefined();
+    expect("encoding" in (body("plainForm") ?? {})).toBe(false);
+    // A JSON body has no per-field wire encoding; a stray `encoding` map is not carried.
+    expect(body("jsonBody")?.encoding).toBeUndefined();
+  });
+});
+
 describe("request body content types", () => {
   it("prefers JSON, then any encodable type, then the source's first declaration", async () => {
     const air = await compile({

@@ -1,7 +1,22 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { operationSafetyInputKeys } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { describe, expect, it } from "vitest";
-import { argsFor, cliFlagsFor, expectedWire, withoutConfirmationInput } from "./bundle-driver.js";
+import {
+  argsFor,
+  cliFlagsFor,
+  expectedWire,
+  wireable,
+  wireRefusal,
+  withoutConfirmationInput,
+} from "./bundle-driver.js";
+
+const fixture = (name: string) =>
+  readFileSync(
+    fileURLToPath(new URL(`../../../examples/fixtures/${name}`, import.meta.url)),
+    "utf8",
+  );
 
 const COLLISION_SPEC = `openapi: 3.0.0
 info: { title: widgets, version: 1.0.0 }
@@ -178,5 +193,79 @@ describe("bundle driver re-projected input names", () => {
       "EndTime<": "b",
       "EndTime>": "c",
     });
+  });
+});
+
+describe("expectedWire shapes a form body as the mock captures it", () => {
+  it("expects a deepObject field as its bracketed wire pairs, by the body's declared encoding", async () => {
+    const air = await compile({
+      spec: fixture("ledger-form.yaml"),
+      manifest: fixture("ledger-form.anvil.yaml"),
+      serviceId: "ledger",
+    });
+    const capture = air.operations.find(
+      (o) => o.sourceRef.operationId === "PostChargesChargeCapture",
+    );
+    if (!capture) throw new Error("PostChargesChargeCapture not compiled");
+    // The compiler carried the media type's `encoding` map into AIR.
+    expect(capture.input.body?.encoding).toEqual({
+      metadata: { style: "deepObject", explode: true },
+      expand: { style: "deepObject", explode: true },
+      transfer_data: { style: "deepObject", explode: true },
+    });
+    const wire = expectedWire(capture, {
+      charge: "ch_1",
+      body: {
+        amount: 1500,
+        metadata: { order_id: "o_1", tier: "gold" },
+        expand: ["customer", "invoice"],
+        transfer_data: { amount: 1200, destination: "acct_1" },
+      },
+      idempotency_key: "k-1",
+    });
+    expect(wire.path).toBe("/v1/charges/ch_1/capture");
+    expect(wire.headers["idempotency-key"]).toBe("k-1");
+    // Exactly the record the generated mock writes for a form body: the wire
+    // pairs under their on-wire names, values as the text they travelled as.
+    expect(wire.body).toEqual({
+      amount: "1500",
+      "metadata[order_id]": "o_1",
+      "metadata[tier]": "gold",
+      "expand[0]": "customer",
+      "expand[1]": "invoice",
+      "transfer_data[amount]": "1200",
+      "transfer_data[destination]": "acct_1",
+    });
+
+    // Query parameters declared deepObject: an array by index, a range object
+    // by key, and the integer branch of the anyOf as the bare scalar.
+    const list = air.operations.find((o) => o.sourceRef.operationId === "GetCharges");
+    if (!list) throw new Error("GetCharges not compiled");
+    expect(
+      expectedWire(list, { created: { gt: 1, lt: 2 }, expand: ["data.customer"], limit: 3 }).query,
+    ).toEqual({ "created[gt]": "1", "created[lt]": "2", "expand[0]": "data.customer", limit: "3" });
+    expect(expectedWire(list, { created: 7 }).query).toEqual({ created: "7" });
+  });
+});
+
+describe("wireRefusal names why the hermetic lanes cannot drive an operation", () => {
+  it("skips a framing refusal with the protocol and reason, and drives a transcodable unary call", async () => {
+    const air = await compile({
+      spec: fixture("kv-stream.proto"),
+      manifest: fixture("kv-stream.anvil.yaml"),
+      serviceId: "kv",
+    });
+    const range = air.operations.find((o) => o.sourceRef.operationId === "Range");
+    const watch = air.operations.find((o) => o.sourceRef.operationId === "Watch");
+    if (!range || !watch) throw new Error("fixture no longer has Range and Watch");
+    // The unary call carries a `json_transcoded` binding: a coordinates
+    // refusal the declared mock facade answers, so the lanes drive it.
+    expect(wireable(range)).toBe(true);
+    expect(wireRefusal(range)).toBeUndefined();
+    // The stream carries no binding: a framing refusal no facade can answer,
+    // so the lanes skip it and say so in the runtime's own words.
+    expect(wireable(watch)).toBe(false);
+    expect(wireRefusal(watch)).toMatch(/^not wire-executable: speaks grpc — /);
+    expect(wireRefusal(watch)).toMatch(/length-prefixed protobuf/);
   });
 });

@@ -326,8 +326,12 @@ func buildRequest(spec OperationSpec, payload map[string]any, config clientConfi
 			contentType = spec.Body.ContentType
 		}
 		request.headers["content-type"] = contentType
-		encoded, err := json.Marshal(bodyValue)
-		if err == nil {
+		if spec.Body != nil && bodyEncodingOf(contentType) == "form" {
+			// assertEncodable has already refused anything the table cannot carry.
+			if form, refusal := formBody(spec.ID, *spec.Body, bodyValue); refusal == nil {
+				request.body = []byte(form)
+			}
+		} else if encoded, err := json.Marshal(bodyValue); err == nil {
 			request.body = encoded
 		}
 	}

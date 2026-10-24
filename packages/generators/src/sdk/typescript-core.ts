@@ -316,11 +316,19 @@ export interface BodyFieldSpec {
   required: boolean;
 }
 
+/** How one form-body field goes on the wire, when the source declared it (OpenAPI \`encoding\`). */
+export interface BodyFieldEncoding {
+  style?: string;
+  explode?: boolean;
+}
+
 export interface BodySpec {
   required: boolean;
   contentType: string;
   projection: "fields" | "whole";
   fields: BodyFieldSpec[];
+  /** Per-field wire encodings the source declared for a form body, by wire name. */
+  encoding?: Record<string, BodyFieldEncoding>;
 }
 
 export interface IdempotencySpec {
@@ -406,7 +414,7 @@ export function invokeModule(withSoap: boolean): string {
 // gates below cannot be bypassed by a method that forgot to check.
 import { dryRunPlan } from "./dry-run.js";
 import { AnvilError, httpStatusToErrorCode, isRetryableCode } from "./errors.js";
-import type { CallOptions, OperationSpec, ParamSpec } from "./spec.js";
+import type { BodySpec, CallOptions, OperationSpec, ParamSpec } from "./spec.js";
 import {
   parseRetryAfter,
   resolveIdempotencyKey,
@@ -755,8 +763,12 @@ ${
     headers,
   };
   if (hasBody) {
-    request.headers["content-type"] = spec.body?.contentType ?? "application/json";
-    request.body = JSON.stringify(bodyValue);
+    const contentType = spec.body?.contentType ?? "application/json";
+    request.headers["content-type"] = contentType;
+    request.body =
+      spec.body && bodyEncodingOf(contentType) === "form"
+        ? formBody(spec.id, spec.body, bodyValue)
+        : JSON.stringify(bodyValue);
   }
   return request;
 }

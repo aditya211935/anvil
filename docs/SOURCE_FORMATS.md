@@ -245,7 +245,11 @@ for what each encoding puts on the wire, including how a multipart file field
 
 A parameter's `style` and `explode` are carried into AIR only when the source
 declares them; an undeclared one is left absent and serialized by OpenAPI's
-per-location default at call time. The
+per-location default at call time. A form body's media-type `encoding` map
+(per-field `style`/`explode` — Stripe declares `metadata` and `expand` as
+`deepObject`) is carried the same way, as `input.body.encoding`, so the
+runtime, the generated mock, the harness oracle, and the four SDKs all put a
+declared field on the wire as the source said. The
 [serialization table](./wire-protocols.md#parameter-serialization) names what
 each style puts on the wire and which value shapes are refused.
 

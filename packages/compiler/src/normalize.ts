@@ -29,7 +29,7 @@ import {
 } from "./classify.js";
 import { deriveNames, estatePathContext, singularize } from "./naming.js";
 import { resolveAuth } from "./normalize-auth.js";
-import { buildRequestBody } from "./normalize-body.js";
+import { buildRequestBody, type RawBodyEncoding } from "./normalize-body.js";
 import { classifyPagination, isSingletonRead } from "./pagination-inference.js";
 import type { ParsedSpec } from "./parse.js";
 import {
@@ -72,7 +72,7 @@ interface RawOperation {
   parameters?: RawParam[];
   requestBody?: {
     required?: boolean;
-    content?: Record<string, { schema?: JsonSchema }>;
+    content?: Record<string, { schema?: JsonSchema; encoding?: RawBodyEncoding }>;
   };
   responses?: Record<
     string,

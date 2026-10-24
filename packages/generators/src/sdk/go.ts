@@ -156,7 +156,16 @@ function operationsFile(plan: SdkPlan): string {
             (field) =>
               `{WireName: ${g(field.wireName)}, Key: ${g(field.key)}, Required: ${field.required}}`,
           )
-          .join(", ")}}}`
+          .join(", ")}}${
+          op.body.encoding
+            ? `, Encoding: map[string]FieldEncodingSpec{${Object.entries(op.body.encoding)
+                .map(
+                  ([field, encoding]) =>
+                    `${g(field)}: {Style: ${g(encoding.style ?? "")}, Explode: ${encoding.explode === true}, ExplodeSet: ${encoding.explode !== undefined}}`,
+                )
+                .join(", ")}}`
+            : ""
+        }}`
       : "nil";
     const carrier = op.idempotency.carrier
       ? `&CarrierSpec{Mechanism: ${g(op.idempotency.carrier.mechanism)}, Key: ${g(op.idempotency.carrier.key)}, Path: ${
