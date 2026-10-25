@@ -125,6 +125,21 @@ function scalarBranchType(schema: JsonSchema | undefined): unknown {
   return alternatives.map(schemaType).find((t) => typeof t === "string" && scalarTypes.has(t));
 }
 
+/**
+ * Bracket segments no contract value is addressed by. `__proto__`,
+ * `constructor` and `prototype` would make the walk read an inherited object
+ * and then write through it — `metadata[__proto__][polluted]=yes` reaches
+ * `Object.prototype` of the whole process, before any schema validation sees
+ * the body. An index past the cap would allocate a sparse array of that
+ * length for one pair. Both come only from a hostile client (the runtime emits
+ * indices from real arrays and names from real keys), so the pair is dropped.
+ */
+const PROTOTYPE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_INDEX = 10_000;
+function isHostileSegment(segment: string): boolean {
+  return PROTOTYPE_SEGMENTS.has(segment) || (/^\d+$/.test(segment) && Number(segment) > MAX_INDEX);
+}
+
 function assignBracketed(
   current: unknown,
   segments: readonly string[],
@@ -140,7 +155,10 @@ function assignBracketed(
     return list;
   }
   const record: Record<string, unknown> = isRecord(current) ? current : {};
-  record[head] = assignBracketed(record[head], rest, text, child);
+  // Own properties only: an inherited value (`toString`) is never a place to
+  // write into, and the record starts fresh at that key.
+  const own = Object.hasOwn(record, head) ? record[head] : undefined;
+  record[head] = assignBracketed(own, rest, text, child);
   return record;
 }
 
@@ -161,7 +179,9 @@ export function decodeDeepObject(
     if (key === root) {
       value = scalar(text, scalarBranchType(schema));
     } else if (key.startsWith(`${root}[`)) {
-      value = assignBracketed(value, bracketSegments(key.slice(root.length)), text, schema);
+      const segments = bracketSegments(key.slice(root.length));
+      if (segments.some(isHostileSegment)) continue;
+      value = assignBracketed(value, segments, text, schema);
     }
   }
   return value;

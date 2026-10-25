@@ -53,6 +53,11 @@ describe("hashCanonical", () => {
       { withToJson: { toJSON: () => ({ b: 1, a: 2 }) }, arr: [{ toJSON: () => undefined }] },
       { omitted: { toJSON: () => undefined }, kept: 1 },
       JSON.parse('{"__proto__":{"authorized":true}}'),
+      // Array-index keys: JavaScript enumerates them first and numerically,
+      // whatever order they were assigned in, so `2` came before `10` and
+      // both before `a` in every stored hash. Status codes are such keys.
+      { "10": "b", "2": "a", b: 1, a: 2, "007": "not an index", "4294967295": "too big" },
+      { responses: { "404": {}, "200": {}, default: {}, "2xx": {} } },
       "a string",
       42,
       true,

@@ -75,6 +75,31 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
+/** An array-index key as JavaScript defines one: a canonical integer below 2^32 - 1. */
+const INDEX_KEY = /^(?:0|[1-9]\d*)$/;
+const MAX_INDEX_KEY = 2 ** 32 - 2;
+function isIndexKey(key: string): boolean {
+  return INDEX_KEY.test(key) && Number(key) <= MAX_INDEX_KEY;
+}
+
+/**
+ * The order `JSON.stringify(canonicalize(value))` wrote an object's keys in.
+ * `canonicalize` assigns the lexicographically sorted keys onto a fresh object,
+ * but JavaScript enumerates array-index keys first, in ascending numeric order,
+ * whatever order they were assigned in — so `{"10": …, "2": …, "a": …}` was
+ * written as `2`, `10`, `a`, not `10`, `2`, `a`. Status codes, positional
+ * schema keys and numeric enum maps all carry such keys, and every stored
+ * contract hash was computed over that order, so the streaming walk keeps it.
+ */
+function canonicalKeyOrder(keys: string[]): string[] {
+  const index: string[] = [];
+  const named: string[] = [];
+  for (const key of keys) (isIndexKey(key) ? index : named).push(key);
+  index.sort((a, b) => Number(a) - Number(b));
+  named.sort();
+  return [...index, ...named];
+}
+
 /**
  * Write `JSON.stringify(canonicalize(value))` to the sink without materializing
  * it. Mirrors `JSON.stringify` exactly: omitted values (`undefined`, functions,
@@ -99,7 +124,7 @@ function writeCanonical(value: unknown, sink: DigestSink): void {
     const record = value as Record<string, unknown>;
     sink.write("{");
     let first = true;
-    for (const key of Object.keys(record).sort()) {
+    for (const key of canonicalKeyOrder(Object.keys(record))) {
       const item = record[key];
       if (isOmitted(item)) continue;
       let text: string | undefined;
