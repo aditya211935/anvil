@@ -33,6 +33,13 @@ exercise `anvil legacy scaffold`, which drafts an evidence-pinned OpenAPI
 document from the C# source that then compiles through the ordinary pipeline.
 See [the fixture walkthrough](legacy-orders-dotnet/README.md).
 
+`legacy-ledger-plsql/` is the database counterpart: one PL/SQL package
+specification and body plus one T-SQL procedure, read as inert DDL text by
+`anvil legacy inventory --collector database`. See
+[its walkthrough](legacy-ledger-plsql/README.md) for the spec-over-body rule,
+the literal transaction and error facts it retains, and the result-set and
+idempotency facts it refuses to invent.
+
 For **real** enterprise specifications (NetSuite SOAP, live OData v2/v4, gRPC)
 compiled through the same pipeline, see the backtest corpus
 ([`../docs/backtesting/ENTERPRISE_SYSTEMS.md`](../docs/backtesting/ENTERPRISE_SYSTEMS.md)).

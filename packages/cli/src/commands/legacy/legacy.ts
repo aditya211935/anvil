@@ -65,9 +65,9 @@ class LegacyInventoryCommandError extends Error {
 export function registerLegacy(parent: Command, ctx: CommandContext): void {
   const legacy = parent
     .command("legacy")
-    .summary("Inventory offline legacy application and messaging evidence.")
+    .summary("Inventory offline legacy application, messaging, and database evidence.")
     .description(
-      "Discover evidence-backed EJB, WCF, resource-adapter, and messaging invocation candidates from caller-supplied offline exports. Collection never connects to a server or broker, loads an assembly, executes bytecode, opens an archive, reads a queue, or invents business semantics.",
+      "Discover evidence-backed EJB, WCF, resource-adapter, messaging, and stored-procedure invocation candidates from caller-supplied offline exports. Collection never connects to a server, broker, or database, loads an assembly, executes bytecode or SQL, opens an archive, reads a queue, or invents business semantics.",
     );
 
   annotate(
@@ -75,7 +75,7 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
       .command("inventory")
       .summary("Build a content-addressed legacy estate inventory without invoking the estate.")
       .description(
-        "Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, and supported broker or AsyncAPI exports. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.",
+        "Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, supported broker or AsyncAPI exports, and PL/SQL or T-SQL stored-procedure DDL. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.",
       )
       .argument("<source>", "offline export file or hardened-expanded directory")
       .requiredOption("--environment <id>", "deployment environment coordinate")

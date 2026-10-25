@@ -1,4 +1,5 @@
 export * from "./bridge/index.js";
+export * from "./collectors/database/index.js";
 export * from "./collectors/dotnet/index.js";
 export * from "./collectors/java-ee/index.js";
 export * from "./collectors/messaging/index.js";

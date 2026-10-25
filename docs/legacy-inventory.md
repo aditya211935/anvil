@@ -188,7 +188,12 @@ pnpm anvil legacy inventory ./mq-export \
   --out refunds-mq.inventory.json
 ```
 
-Valid collector values are `auto`, `java-ee`, `dotnet`, and `messaging`.
+Valid collector values are `auto`, `java-ee`, `dotnet`, `messaging`, and
+`database`. The `database` lane reads PL/SQL and T-SQL stored-procedure DDL
+(`.sql`, `.ddl`, `.pks`, `.pkb`, `.pls`, `.plb`, `.prc`, `.spc`, `.bdy`,
+`.tsql`) as inert text; see
+[Databases (stored procedures)](legacy-estates.md#databases-stored-procedures)
+for what it does and does not claim.
 
 `auto` does not depend only on familiar filenames. It examines a bounded prefix
 for supported signatures, including Java EJB annotations, WebLogic/JBoss XML

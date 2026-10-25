@@ -37,7 +37,7 @@ export function generateAnvilSkill(program: Command): Record<string, string> {
     "reference/legacy-estates.md":
       frontmatter(
         "anvil-legacy-estates",
-        "Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, and messaging estates before proposing any runtime bridge or business-shaped MCP tool.",
+        "Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, messaging, and stored-procedure DDL estates before proposing any runtime bridge or business-shaped MCP tool.",
       ) + legacyEstatesRef(),
     "reference/composing-capabilities.md":
       frontmatter(
