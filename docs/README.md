@@ -24,6 +24,7 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
 | Can the agent investigate a missing fact? | [Refinement SDK](refinement-sdk.md) | Bounded task, evidence and proposal |
 | Do related tools need joint review? | [Group refinement](group-refinement.md) | Member and non-member evaluation results |
 | Can this legacy capability execute? | [Runtime bridges](legacy-runtime-bridges.md) | Reviewed binding and declared bridge prerequisites |
+| Where does the legacy estate stand? | [Modernization scorecard](legacy-scorecard.md) | Counts of candidates, conflicts, reviews, executable shapes, and blockers |
 | Do the generated surfaces agree? | [Simulation and backtesting](simulation-and-backtesting.md) | Results scoped to bundle bytes and test conditions |
 | Which call sequences break a toolchain? | [Stateful fuzzing](fuzzing.md) | Minimized failures, fixture state, and exact replay |
 | Can this bundle advance? | [CI workflow](CI.md) | Fresh evidence for the same bundle hash |

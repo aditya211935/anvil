@@ -519,6 +519,7 @@ the exact boundary.
 | `planLegacyCoverageGaps` | Evidence acquisition gaps | What evidence is still required; performs no acquisition |
 | `explainLegacyCandidate` | Exact candidate explanation | Claims, conflicts, coordinates, provenance, and unknowns |
 | `diffLegacyInventories` | Logical and occurrence diff | Deterministic estate drift between verified inventories |
+| `assessLegacyModernization` | Content-addressed modernization scorecard | Counts over inventory and binding records: conflicts, unknown dimensions, coverage identity, reviewed candidates, executable shape vs adapter family, blockers; never an approval or readiness claim |
 | `createLegacyRefinementTask` | Hash-bound task | Decisions required before review |
 | `assessLegacyRefinementProposal` | Structured assessment | Whether a proposal may proceed to human review |
 | `createReviewedLegacyCapabilityBinding` | Approved binding plan | Reviewed mapping; does not create a runtime |

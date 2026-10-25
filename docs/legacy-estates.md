@@ -51,6 +51,7 @@ fail-closed collection plan
   -> content-addressed inventory
   -> conflict-preserving candidates
   -> evidence graph + coverage gaps + candidate explanations
+  -> modernization scorecard (counts; never a gate)
   -> one hash-bound harness task
   -> deterministic proposal assessment
   -> separate human approval or rejection
@@ -58,6 +59,11 @@ fail-closed collection plan
   -> future deployment-local bridge
   -> future business-shaped MCP tool
 ```
+
+At any point after the inventory exists, `anvil legacy scorecard` counts what
+the estate contains, what is reviewed, and what blocks the rest; read
+[Read a legacy modernization scorecard](legacy-scorecard.md) for what each
+section does and does not say.
 
 The harness can investigate source code, tests, schemas, runbooks, and change
 records. It cannot remove required decisions from the task, approve its own
@@ -264,5 +270,6 @@ become callable.
 
 - [Build a legacy inventory](legacy-inventory.md)
 - [Refine and review one candidate](legacy-refinement.md)
+- [Read a legacy modernization scorecard](legacy-scorecard.md)
 - [Use the legacy TypeScript SDK](legacy-sdk.md)
 - [Design a deployment-local bridge](legacy-runtime-bridges.md)

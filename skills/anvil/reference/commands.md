@@ -871,6 +871,20 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete deterministic inventory diff
 
+#### `anvil legacy scorecard`  *(mutates)*
+`anvil legacy scorecard [options] <inventory>`
+
+Score an estate's modernization state from its inventory and reviewed bindings.
+
+Counts what the inventory contains, how much of it is understood, which candidates have a reviewed binding, which bindings have the one transport shape the queue bridge can conformance-test, and what blocks the rest. Every figure is a count over inventory or binding records; the scorecard proposes no approval, asserts no idempotency, and never reports a capability as ready. It exits 0 whenever its inputs verify: a scorecard is a reading, not a gate.
+
+Options:
+- `--bindings <paths...>` — reviewed capability bindings or decision reports: files, or directories of *.json
+- `--plan <file>` — assess coverage against an addressed collection plan
+- `--format <format>` — output format for --out and the terminal: json | md
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete scorecard report as JSON
+
 ### `anvil enrich-sources`
 `anvil enrich-sources [options] [command]`
 

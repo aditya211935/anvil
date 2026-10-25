@@ -117,12 +117,18 @@ anvil legacy gaps legacy.inventory.json \\
   --plan collection-plan.addressed.json --check --out legacy.gaps.json
 anvil legacy explain legacy.inventory.json <lc_candidate_id> --out explanation.json
 anvil legacy diff previous.inventory.json legacy.inventory.json --out inventory.diff.json
+anvil legacy scorecard legacy.inventory.json --bindings reviewed-bindings/ \\
+  --format md --out legacy.scorecard.md
 \`\`\`
 
 \`graph\` projects typed evidence links. \`gaps\` measures semantic completeness
 independently of collector yield. \`explain\` traces one candidate to its claims
 and artifacts. \`diff\` separates logical-lineage changes from deployment
-occurrence changes.
+occurrence changes. \`scorecard\` counts candidates, conflicts, unknown claim
+dimensions, reviewed bindings, and the bindings whose transport shape the queue
+bridge can conformance-test (\`executable_shape\`) versus those still needing an
+adapter family; it exits 0 whenever its inputs verify and never proposes an
+approval or calls a capability ready.
 
 The safe progression is:
 
