@@ -184,6 +184,13 @@ Anvil keeps both physical `binding_target` claims. Evidence ranking helps a
 reviewer inspect stronger sources first; it never deletes the lower-ranked
 assertion or chooses a convenient winner.
 
+The same rule holds across exports. When production and UAT, several
+applications, or the source repository and deployed configuration are merged
+with `anvil legacy merge`, the merged snapshot keeps every observation, lets the
+same reconciler surface conflicts, and marks each logical capability whose
+deployments disagree as `divergent` with an explicit warning. See
+[Merge an estate from several exports](legacy-inventory.md#7b-merge-an-estate-from-several-exports).
+
 An MQ object and an AsyncAPI channel also remain separate candidates until
 reviewed evidence establishes their relationship. A matching string is a lead,
 not proof that two protocols describe the same business capability.

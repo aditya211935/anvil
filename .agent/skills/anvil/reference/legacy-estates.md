@@ -103,12 +103,17 @@ anvil legacy gaps legacy.inventory.json \
   --plan collection-plan.addressed.json --check --out legacy.gaps.json
 anvil legacy explain legacy.inventory.json <lc_candidate_id> --out explanation.json
 anvil legacy diff previous.inventory.json legacy.inventory.json --out inventory.diff.json
+anvil legacy merge prod.inventory.json uat.inventory.json --out estate.inventory.json
 ```
 
 `graph` projects typed evidence links. `gaps` measures semantic completeness
 independently of collector yield. `explain` traces one candidate to its claims
 and artifacts. `diff` separates logical-lineage changes from deployment
-occurrence changes.
+occurrence changes. `merge` unions several exports of one estate (environments,
+applications, source plus deployed configuration) into one verified inventory
+report that every other command accepts; it keeps every value, and marks each
+logical capability whose deployments disagree with a
+`legacy/merge/cross_source_disagreement` warning (`--check` fails on it).
 
 The safe progression is:
 

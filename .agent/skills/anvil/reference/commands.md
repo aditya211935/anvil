@@ -871,6 +871,33 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete deterministic inventory diff
 
+#### `anvil legacy merge`  *(mutates)*
+`anvil legacy merge [options] <inventory...>`
+
+Merge several inventories of one estate into one verified snapshot.
+
+Unions content-addressed artifacts, evidence, and observations from several offline exports (environments, applications, source plus deployed configuration) and reconciles them together. Nothing is chosen or dropped: records that disagree stay as conflicts, and each logical capability deployed at several coordinates carries explicit cross-source agreement or disagreement. The output is a complete inventory report that every downstream legacy command accepts.
+
+Options:
+- `--estate <id>` — merged estate id (required when the inputs name different estates)
+- `--estate-name <name>` — human-readable merged estate name
+- `--out <file>` — write the complete report without overwriting different content
+- `--check` — exit non-zero when any logical capability disagrees across sources
+- `--json` — emit the complete machine-readable report
+
+#### `anvil legacy scaffold`  *(mutates)*
+`anvil legacy scaffold [options] <source>`
+
+Draft an OpenAPI contract from legacy source that has none.
+
+Reads Java (JAX-RS, Spring MVC, web.xml) and .NET (ASP.NET attribute routing, ASMX) source as inert text and emits a deterministic OpenAPI 3 draft whose every operation records the source coordinates it was read from. The draft compiles through `anvil compile` like any specification; nothing in it carries business semantics the source did not declare, so mutations land review_required.
+
+Options:
+- `--title <title>` — info.title for the draft (default: source directory name)
+- `--lane <lane>` — scaffold lane (auto | java | dotnet)
+- `--out <file>` — write the OpenAPI draft (JSON) without overwriting different content
+- `--json` — emit the complete machine-readable report
+
 ### `anvil enrich-sources`
 `anvil enrich-sources [options] [command]`
 
