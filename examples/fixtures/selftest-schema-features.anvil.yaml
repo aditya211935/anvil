@@ -1,0 +1,33 @@
+# Companion manifest for selftest-schema-features.yaml: approves every
+# operation and narrows the two unions that cannot be told apart by value.
+operations:
+  listThings: { state: approved }
+  createThing:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: Creates a thing; a retry may duplicate it. }
+    retries: { enabled: false }
+    state: approved
+  replyThing:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: Posts a reply; a retry may duplicate it. }
+    retries: { enabled: false }
+    state: approved
+    params:
+      # The whole body is oneOf[ContactReply, AdminReply] and both are open
+      # objects, so every body matches both and a strict oneOf refuses all of
+      # them. An integration replies as an admin; narrow to that alternative.
+      body: { one_of: AdminReply }
+  createPage:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: Creates a page; a retry may duplicate it. }
+    retries: { enabled: false }
+    state: approved
+    params:
+      # `body` is oneOf[PageBodyWrite, PageNestedBodyWrite]; both accept any
+      # object. Narrow to the flat form and require both of its fields.
+      body: { one_of: PageBodyWrite, required: [representation, value] }
+  submitForm:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: Submits a form; a retry may duplicate it. }
+    retries: { enabled: false }
+    state: approved

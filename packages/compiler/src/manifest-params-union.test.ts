@@ -171,6 +171,55 @@ describe("manifest params: narrowing a union to one alternative", () => {
     expect(bodyProp(opNamed(air, "updatePage"))?.oneOf).toHaveLength(2);
   });
 
+  it("narrows a body that is a union at its root under the surface key `body`", async () => {
+    // Intercom's reply: the whole request body is oneOf[contact reply, admin
+    // reply], both open objects. Nothing is named `body` inside it, so `body`
+    // means the body itself — the key the input surface gives it.
+    const spec = readFileSync(
+      new URL("../../../examples/fixtures/selftest-schema-features.yaml", import.meta.url),
+      "utf8",
+    );
+    const air = await compile({
+      spec,
+      serviceId: "features",
+      manifest: [
+        "operations:",
+        "  replyThing:",
+        "    params:",
+        "      body: { one_of: AdminReply }",
+      ].join("\n"),
+    });
+    const reply = opNamed(air, "replyThing");
+    expect(reply.input.body?.schema.oneOf).toBeUndefined();
+    expect(reply.input.body?.schema.type).toBe("object");
+    expect(reply.input.body?.schema.required).toEqual(["admin_id"]);
+    expect(notes(reply)).toContain("Input 'body' narrowed by manifest to oneOf[1] (AdminReply).");
+    // The assembled input schema serves the narrowed body, and the mock's
+    // contract (body.schema.required) requires what the alternative requires.
+    const served = (
+      reply.input.schema?.properties as Record<string, Record<string, unknown>> | undefined
+    )?.body;
+    expect(served?.oneOf).toBeUndefined();
+    expect(served?.required).toEqual(["admin_id"]);
+    // A real property named `body` still wins over the whole body.
+    const page = opNamed(
+      await compile({
+        spec,
+        serviceId: "features",
+        manifest: [
+          "operations:",
+          "  createPage:",
+          "    params:",
+          "      body: { one_of: PageBodyWrite }",
+        ].join("\n"),
+      }),
+      "createPage",
+    );
+    expect(page.input.body?.schema.required).toEqual(["title", "body"]);
+    expect(bodyProp(page)?.oneOf).toBeUndefined();
+    expect(notes(page)).toContain("Input 'body' narrowed by manifest to oneOf[0] (PageBodyWrite).");
+  });
+
   it("rejects a params entry that is neither a retype nor a narrowing", async () => {
     await expect(
       compiled(["  createPage:", "    params:", "      body: { one_of: -1 }"]),

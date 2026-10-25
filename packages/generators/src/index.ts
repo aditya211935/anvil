@@ -31,6 +31,7 @@ export * from "./evals-evidence.js";
 export * from "./gateway-workspace.js";
 export * from "./mcp.js";
 export * from "./mock.js";
+export * from "./mock-example.js";
 export * from "./plugins.js";
 export * from "./resources.js";
 export * from "./sdk/index.js";

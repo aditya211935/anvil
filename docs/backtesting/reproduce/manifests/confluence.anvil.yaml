@@ -41,6 +41,14 @@ operations:
       reason: Creates a new Confluence page; retrying after a failure may create a duplicate.
     retries:
       enabled: false
+    params:
+      # Confluence v2 types `body` as oneOf[PageBodyWrite, PageNestedBodyWrite].
+      # Both alternatives are open objects, so every body matches both and a
+      # strict oneOf (the generated MCP server's zod shape) refuses all of them.
+      # Narrow to the flat form the service documents, {representation, value},
+      # and require both of its fields. Tighten-only: the nested form is dropped,
+      # nothing the flat form did not already accept is admitted.
+      body: { one_of: PageBodyWrite, required: [representation, value] }
     state: approved
 
   # Not idempotent: the space key must be unique, so a bare retry after a
@@ -71,6 +79,12 @@ operations:
       reason: Adds a comment; retrying after a failure may post it twice.
     retries:
       enabled: false
+    params:
+      # Same shape as the page body: oneOf[CommentBodyWrite, CommentNestedBodyWrite],
+      # both open objects, so a strict oneOf refuses every comment body. Narrow
+      # to the flat {representation, value} form the service documents and
+      # require both fields; tighten-only.
+      body: { one_of: CommentBodyWrite, required: [representation, value] }
     state: approved
 
   # Not idempotent: each call appends a new inline comment.
@@ -85,6 +99,10 @@ operations:
       reason: Adds an inline comment; retrying after a failure may post it twice.
     retries:
       enabled: false
+    params:
+      # As for footer comments: narrow the oneOf[CommentBodyWrite,
+      # CommentNestedBodyWrite] body to the flat form; tighten-only.
+      body: { one_of: CommentBodyWrite, required: [representation, value] }
     state: approved
 
   # Everything else keeps the compiler's own classification; only exposure is
@@ -92,7 +110,12 @@ operations:
   # used instead of the `anvil approve` + `anvil build` per-capability path).
   getPages: { state: approved }
   getPageById: { state: approved }
-  updatePage: { state: approved }
+  updatePage:
+    params:
+      # The update body carries the same oneOf[PageBodyWrite, PageNestedBodyWrite]
+      # `body` as createPage; narrow it the same way, tighten-only.
+      body: { one_of: PageBodyWrite, required: [representation, value] }
+    state: approved
   deletePage: { state: approved }
   getPageAttachments: { state: approved }
   getPageLabels: { state: approved }

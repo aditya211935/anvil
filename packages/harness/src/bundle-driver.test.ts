@@ -7,6 +7,9 @@ import {
   argsFor,
   cliFlagsFor,
   expectedWire,
+  explainInputRefusal,
+  formCapture,
+  synthesisProblems,
   wireable,
   wireRefusal,
   withoutConfirmationInput,
@@ -196,6 +199,37 @@ describe("bundle driver re-projected input names", () => {
   });
 });
 
+const FEATURES = fileURLToPath(
+  new URL("../../../examples/fixtures/selftest-schema-features", import.meta.url),
+);
+const features = (manifest?: string) =>
+  compile({
+    spec: readFileSync(`${FEATURES}.yaml`, "utf8"),
+    manifest: manifest ?? readFileSync(`${FEATURES}.anvil.yaml`, "utf8"),
+    serviceId: "features",
+  });
+
+describe("expectedWire mirrors a form-urlencoded body as the mock decodes it", () => {
+  it("expects strings, a repeated key as an array and a single value as a plain string", async () => {
+    const air = await features();
+    const op = air.operations.find((o) => o.sourceRef.operationId === "submitForm");
+    if (!op) throw new Error("submitForm not compiled");
+    const wire = expectedWire(op, {
+      body: { name: "ex", amount: 100, tags: ["a", "b"], notify: true, skipped: null },
+      confirm: true,
+    });
+    expect(wire.body).toEqual({ name: "ex", amount: "100", tags: ["a", "b"], notify: "true" });
+    expect(formCapture({ tags: ["only"] })).toEqual({ tags: "only" });
+    // A JSON body keeps its JSON shape.
+    const json = air.operations.find((o) => o.sourceRef.operationId === "createPage");
+    if (!json) throw new Error("createPage not compiled");
+    expect(expectedWire(json, { body: { title: "t", body: { value: "v" } } }).body).toEqual({
+      title: "t",
+      body: { value: "v" },
+    });
+  });
+});
+
 describe("expectedWire shapes a form body as the mock captures it", () => {
   it("expects a deepObject field as its bracketed wire pairs, by the body's declared encoding", async () => {
     const air = await compile({
@@ -267,5 +301,41 @@ describe("wireRefusal names why the hermetic lanes cannot drive an operation", (
     expect(wireable(watch)).toBe(false);
     expect(wireRefusal(watch)).toMatch(/^not wire-executable: speaks grpc — /);
     expect(wireRefusal(watch)).toMatch(/length-prefixed protobuf/);
+  });
+});
+
+describe("explainInputRefusal names the cause of an input-validation refusal", () => {
+  it("explains an indiscriminable union with the one_of remedy, and leaves other errors alone", async () => {
+    // Without the narrowing manifest, createPage's `body` is a oneOf whose
+    // alternatives both accept the synthesized value.
+    const air = await features("operations:\n  createPage: { state: approved }\n");
+    const op = air.operations.find((o) => o.sourceRef.operationId === "createPage");
+    if (!op) throw new Error("createPage not compiled");
+    expect(synthesisProblems(op)).toEqual([
+      expect.objectContaining({ path: "body.body", kind: "indiscriminable_union" }),
+    ]);
+    const refusal =
+      "MCP error -32602: Input validation error: Invalid arguments for tool features_create_page: Invalid input: more than one option matched at body.body";
+    const explained = explainInputRefusal(op, refusal);
+    expect(explained).toMatch(
+      /^synthesized arguments cannot satisfy the operation's own input schema/,
+    );
+    expect(explained).toContain(
+      "body.body: oneOf alternatives [0: object{representation, value}, 1: object]",
+    );
+    expect(explained).toContain("params: { body: { one_of: <component name or index> } }");
+    expect(explained).toContain("(server said: MCP error -32602");
+    // An upstream error is not about synthesis; the text passes through trimmed.
+    const upstream =
+      '{ "error": { "code": "validation_error", "message": "Upstream returned 400." } }';
+    expect(explainInputRefusal(op, upstream)).toBe(upstream);
+    // With the narrowing applied there is nothing to explain, so even a
+    // validation refusal is reported as the server worded it.
+    const narrowed = (await features()).operations.find(
+      (o) => o.sourceRef.operationId === "createPage",
+    );
+    if (!narrowed) throw new Error("createPage not compiled");
+    expect(synthesisProblems(narrowed)).toEqual([]);
+    expect(explainInputRefusal(narrowed, refusal)).toBe(refusal);
   });
 });

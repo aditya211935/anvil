@@ -149,6 +149,17 @@ or an alternative that does not exist each leave the input as the source typed
 it and add a review note that says why. Where the input appears more than once
 (a parameter and its body projection), every copy is narrowed or none is.
 
+`body` names the whole request body when no parameter or body field is called
+`body` — for a body typed as a union at its root, such as Intercom's reply
+(`oneOf[contact reply, admin reply]`), `body: { one_of: admin_reply_conversation_request }`
+picks the form the integration sends. A real field named `body` (Confluence's
+page body) takes precedence, as it does on the input surface.
+
+`anvil selftest` points at the need for this narrowing: when the synthesized
+arguments cannot satisfy a `oneOf` because every alternative accepts them, the
+fidelity check says so and names the `params` entry to write, rather than
+quoting the server's "more than one option matched".
+
 The narrowed schema is what AIR records, so the MCP tool's input schema, the
 simulator's value validation (`anvil simulate serve --validate-values`), and
 the generated SDK types of a narrowed parameter all agree. Operations the entry does not name keep their union. The entry is part of the `params` overlay predicate: two

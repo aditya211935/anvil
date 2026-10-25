@@ -18,7 +18,12 @@ import {
   serializeSimpleParam,
   wireExecutability,
 } from "@anvil/air";
-import { exampleInput } from "@anvil/generators";
+import {
+  describeExampleProblem,
+  type ExampleProblem,
+  exampleInput,
+  exampleInputReport,
+} from "@anvil/generators";
 import {
   credentialProfileName,
   envPrefix,
@@ -107,6 +112,65 @@ export function argsFor(op: Operation, tag: string): Record<string, unknown> {
     args[key] = `${tag}-${randomUUID()}`;
   }
   return args;
+}
+
+/**
+ * Why the synthesized arguments may not satisfy the operation's own input
+ * schema: a contradiction the schema admits no value for, or a `oneOf` whose
+ * alternatives cannot be told apart by value (`@anvil/generators`).
+ */
+export function synthesisProblems(op: Operation): ExampleProblem[] {
+  return exampleInputReport(op).problems;
+}
+
+/** The generated MCP server's input-validation refusal (the SDK's -32602), as its text reads. */
+const INPUT_REFUSAL = /-32602|Input validation error|Invalid arguments for tool/i;
+
+/**
+ * Turn a tool's input-validation refusal of the synthesized arguments into a
+ * finding a reviewer can act on. The raw zod message ("more than one option
+ * matched at body.body") names the symptom; the synthesis report names the
+ * cause and, where one exists, the manifest remedy. Returns the raw text
+ * unchanged when the refusal is not about input validation or synthesis found
+ * nothing wrong — then the server is the one to question.
+ */
+export function explainInputRefusal(op: Operation, text: string): string {
+  if (!INPUT_REFUSAL.test(text)) return trim(text);
+  const problems = synthesisProblems(op);
+  if (problems.length === 0) return trim(text);
+  return (
+    `synthesized arguments cannot satisfy the operation's own input schema — ` +
+    `${problems.map(describeExampleProblem).join("; ")} (server said: ${trim(text)})`
+  );
+}
+
+/**
+ * A form-urlencoded body as the mock records it after decoding: every value a
+ * string, a repeated key an array, a single value a plain string. This mirrors
+ * `URLSearchParams` — the one encoding the runtime speaks for forms — so the
+ * fidelity oracle compares like with like. Nested values have no form
+ * encoding; the runtime refuses them before the wire, so they are left as they
+ * are and no capture ever exists to compare them against.
+ */
+export function formCapture(value: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, item] of Object.entries(value)) {
+    if (item === undefined || item === null) continue;
+    if (Array.isArray(item) && item.every(isFormPrimitive)) {
+      const texts = item.map(String);
+      out[name] = texts.length === 1 ? texts[0] : texts;
+    } else if (isFormPrimitive(item)) {
+      out[name] = String(item);
+    } else {
+      out[name] = item;
+    }
+  }
+  return out;
+}
+
+function isFormPrimitive(value: unknown): value is string | number | boolean | bigint {
+  const t = typeof value;
+  return t === "string" || t === "number" || t === "boolean" || t === "bigint";
 }
 
 /**
@@ -513,6 +577,8 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
         break;
     }
   }
+  // A form body reaches the wire as `name=value` pairs the mock records under
+  // their on-wire names — expect that shape, not the JSON the tool took.
   if (b && bodyEncodingFor(b.contentType) === "form_urlencoded" && isRecord(body)) {
     body = expectedFormBody(b.encoding, body);
   }

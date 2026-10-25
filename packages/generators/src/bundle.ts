@@ -25,12 +25,8 @@ import { generateCliSource, runtimeServerBundle, webhookRoutesJson } from "./ent
 import { generateEvals } from "./evals.js";
 import { operationFileStem } from "./file-stem.js";
 import { generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
-import {
-  exampleInput,
-  generateMockRoutes,
-  generateMockServerSource,
-  generateScenarios,
-} from "./mock.js";
+import { generateMockRoutes, generateMockServerSource, generateScenarios } from "./mock.js";
+import { exampleInput } from "./mock-example.js";
 import { generateHarnessPlugins } from "./plugins.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
 import { generateSdks } from "./sdk/index.js";

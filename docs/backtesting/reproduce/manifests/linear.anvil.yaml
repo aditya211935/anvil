@@ -6,3 +6,13 @@ operations:
     state: approved
   issue:
     state: approved
+  # Three fields carry a query language in their arguments: `customViewDetailsSuggestion`
+  # takes a `filter` document, and the Jira import pair takes raw JQL. The compiler
+  # blocks each as an unconstrained passthrough no `query_policy` dialect guards;
+  # holding them blocked here is the reviewed decision, and they stay unexposed.
+  customViewDetailsSuggestion:
+    state: blocked
+  issueImportJqlCheck:
+    state: blocked
+  issueImportCreateJira:
+    state: blocked
