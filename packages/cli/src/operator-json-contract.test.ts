@@ -529,6 +529,10 @@ describe("legacy product commands keep the operator JSON contract", () => {
   it.each([
     ["legacy bridge plan", ["legacy", "bridge", "plan", "missing-decision.json", "--json"]],
     [
+      "legacy bridge lower",
+      ["legacy", "bridge", "lower", "missing-binding.json", "--title", "t", "--json"],
+    ],
+    [
       "legacy bridge conformance",
       [
         "legacy",
