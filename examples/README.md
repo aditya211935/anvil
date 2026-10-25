@@ -26,6 +26,13 @@ See [the fixture walkthrough](legacy-refunds/README.md). It stops before harness
 submission and runtime execution because neither business meaning nor a live
 WebLogic bridge can be inferred from deployment descriptors.
 
+`legacy-orders-dotnet/` is a synthetic .NET estate with no published contract:
+an ASP.NET Core attribute-routed controller, a convention-routed ASP.NET Web
+API 2 controller with its `WebApiConfig.cs`, and an ASMX web service. Use it to
+exercise `anvil legacy scaffold`, which drafts an evidence-pinned OpenAPI
+document from the C# source that then compiles through the ordinary pipeline.
+See [the fixture walkthrough](legacy-orders-dotnet/README.md).
+
 For **real** enterprise specifications (NetSuite SOAP, live OData v2/v4, gRPC)
 compiled through the same pipeline, see the backtest corpus
 ([`../docs/backtesting/ENTERPRISE_SYSTEMS.md`](../docs/backtesting/ENTERPRISE_SYSTEMS.md)).
