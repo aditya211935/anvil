@@ -563,6 +563,7 @@ describe("legacy product commands keep the operator JSON contract", () => {
     ],
     ["legacy diff", ["legacy", "diff", "missing-before.json", "missing-after.json", "--json"]],
     ["legacy merge", ["legacy", "merge", "missing-prod.json", "missing-uat.json", "--json"]],
+    ["legacy scaffold", ["legacy", "scaffold", "missing-source-dir", "--json"]],
   ] as const)("%s emits one structured refusal document", async (label, argv) => {
     const result = await run([...argv]);
     const envelope = expectRefusalContract(result, label);
