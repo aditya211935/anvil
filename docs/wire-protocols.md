@@ -156,11 +156,15 @@ cannot promise what the document does not ask for. A union or interface is
 selected through inline fragments — `{ __typename ... on Product { … } }` —
 and its schema is a `oneOf` of the members. A field that takes a required
 argument is selected nowhere and listed nowhere (`graphql_field_omitted_required_args`).
-Where the selection stops — four levels deep, or on re-entering a type — the
+Where the selection stops — four levels deep, 300 fields in total (spent
+breadth-first, nearest the root first), or on re-entering a type — the
 document selects only `__typename`, the schema shows the `TypenameOnly`
 component at that position, and `graphql_selection_truncated` names it. A
-compiled operation always carries its binding; a GraphQL operation without
-one was not produced by this compiler, and the transport gate says so.
+position the cut makes different from its type's component is a positional
+component (`<Type>_at_<hash>`) referenced by `$ref`, so the bounded projection
+is one `$ref` hop deep for GraphQL exactly as it is for REST. A compiled
+operation always carries its binding; a GraphQL operation without one was not
+produced by this compiler, and the transport gate says so.
 
 GraphQL can return an `errors` array with HTTP 200. Anvil treats that response
 as a failure, including responses that contain both `data` and `errors`.

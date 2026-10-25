@@ -99,6 +99,20 @@ const isRef = (v: unknown): v is Ref =>
 const refName = (ref: Ref): string | undefined =>
   ref.$ref.match(/^#\/components\/schemas\/(.+)$/)?.[1];
 
+/**
+ * The typed, non-recursive stand-in `materializeSchema` leaves where it will
+ * not expand a named schema any further: "this is a Customer object", with the
+ * target's `type` when it declares one, and a pointer to the full definition.
+ */
+function namedStub(name: string, target: unknown): Record<string, unknown> | unknown[] {
+  const type =
+    target !== null && typeof target === "object" && !Array.isArray(target)
+      ? (target as Record<string, unknown>).type
+      : undefined;
+  const description = `A '${name}' object; nested one level deep to keep this schema a bounded size — see the '${name}' schema for its full fields.`;
+  return truncateToStub(typeof type === "string" ? { type, description } : { description });
+}
+
 /** Collect `components.schemas` from a parsed OpenAPI document, defensively. */
 function namedSchemasOf(document: unknown): Record<string, unknown> {
   const doc = document as { components?: { schemas?: Record<string, unknown> } } | undefined;
@@ -739,6 +753,14 @@ export interface MaterializeResult {
   nodeBudgetLimitedAt: string[];
 }
 
+/** A named schema's materialized body, memoized for the walk that produced it. */
+interface MemoEntry {
+  refDepth: number;
+  value: unknown;
+  /** Object/array tree positions in `value` — what one more use costs the output. */
+  size: number;
+}
+
 /** Shared mutable expansion budget threaded through one materialization walk. */
 interface Budget {
   count: number;
@@ -789,7 +811,15 @@ export function materializeSchema(
   // this each branch re-inlines that body, each hop fans out to more shared
   // types, and a handful of cross-referential operations produced a 400MB+
   // document although `bundleDocument` had already deduplicated them once.
-  const resolved = new Map<string, { refDepth: number; value: unknown }>();
+  // The memo saves the WORK, not the OUTPUT: the shared value is one object in
+  // memory but `JSON.stringify` writes a full copy at every position it is
+  // returned to, so a hit is charged against the node budget at the value's
+  // tree size (`size`), exactly as walking it again would have been. Before
+  // that, a response that reached the same few hundred named types from
+  // thousands of positions (GitHub's `Query.nodes`, an interface with ~250
+  // implementations rendered inline) materialized to 49,000 nodes under a
+  // 4,000-node budget, because only the first expansion was ever counted.
+  const resolved = new Map<string, MemoEntry>();
   const inheritAllOf = options.inheritAllOf === true;
   const nameAlternatives = options.nameAlternatives === true;
   const budget: Budget = { count: 0, max: maxNodes, spent: false, inheritAllOf, nameAlternatives };
@@ -817,7 +847,7 @@ function resolveRefs(
   path: string,
   refDepthLimitedAt: string[],
   nodeBudgetLimitedAt: string[],
-  resolved: Map<string, { refDepth: number; value: unknown }>,
+  resolved: Map<string, MemoEntry>,
   budget: Budget,
   inSchemaMap = false,
 ): unknown {
@@ -831,6 +861,11 @@ function resolveRefs(
       budget.spent = true;
       nodeBudgetLimitedAt.push(path);
     }
+    // A reference to a known named schema still says what it is.
+    if (isRef(node)) {
+      const name = refName(node);
+      if (name !== undefined && name in namedSchemas) return namedStub(name, namedSchemas[name]);
+    }
     return truncateToStub(node as Record<string, unknown> | unknown[], inSchemaMap);
   }
   budget.count += 1;
@@ -843,7 +878,20 @@ function resolveRefs(
     // inherited base expands at the ref's own depth, a nested ref one deeper.
     const memoDepth = inherited ? refDepth - 1 : refDepth;
     const cached = resolved.get(name);
-    if (cached !== undefined && cached.refDepth <= memoDepth) return cached.value;
+    if (cached !== undefined && cached.refDepth <= memoDepth) {
+      // A reuse is a full copy in the output; it must fit the budget like a
+      // fresh expansion would, and when it does not, this position gets the
+      // same typed stub a budget-cut expansion would have produced.
+      if (budget.count + cached.size > budget.max) {
+        if (!budget.spent) {
+          budget.spent = true;
+          nodeBudgetLimitedAt.push(path);
+        }
+        return namedStub(name, namedSchemas[name]);
+      }
+      budget.count += cached.size;
+      return cached.value;
+    }
     if (
       ancestors.has(name) ||
       (refDepth >= maxRefDepth &&
@@ -851,13 +899,7 @@ function resolveRefs(
         !(/\.oneOf\[\d+\]$/.test(path) && compactLeafSchema(namedSchemas[name])))
     ) {
       refDepthLimitedAt.push(path);
-      const target = namedSchemas[name];
-      const type =
-        target !== null && typeof target === "object" && !Array.isArray(target)
-          ? (target as Record<string, unknown>).type
-          : undefined;
-      const description = `A '${name}' object; nested one level deep to keep this schema a bounded size — see the '${name}' schema for its full fields.`;
-      return truncateToStub(typeof type === "string" ? { type, description } : { description });
+      return namedStub(name, namedSchemas[name]);
     }
     const nextAncestors = new Set(ancestors);
     nextAncestors.add(name);
@@ -878,7 +920,14 @@ function resolveRefs(
     const shaped = inherited ? withoutDiscriminatorMapping(value) : value;
     // Only memoize a fully-expanded value: one truncated by an exhausted budget
     // is not the type's real body and must not be served to another reference.
-    if (!budget.spent) resolved.set(name, { refDepth: memoDepth, value: shaped });
+    // The value was built under the budget, so measuring it is O(budget).
+    if (!budget.spent) {
+      resolved.set(name, {
+        refDepth: memoDepth,
+        value: shaped,
+        size: treeSize(shaped, Number.POSITIVE_INFINITY),
+      });
+    }
     return shaped;
   }
 

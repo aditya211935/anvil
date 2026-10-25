@@ -13,10 +13,27 @@
  * the schema for that position has to say so rather than pointing at the
  * type's full component. `responseSchemaFor` renders a node as a `$ref` to the
  * type's component only when the node's whole subtree is the type's canonical
- * selection; anything else is rendered inline, bounded by `INLINE_MAX_DEPTH`
- * so it stays inside the anonymous-nesting budget the shared `decycle` pass
- * applies to every spec.
+ * selection; anything else becomes a *positional component* of its own (see
+ * `SchemaRegistry`), referenced with `$ref` like a vendor type, so the shared
+ * materialization bounds govern it exactly as they govern every REST schema.
+ *
+ * The tree is bounded on three axes, and every bound is a *cut*: the document
+ * selects `__typename` there, the schema says so, and the diagnostic names the
+ * position. Depth (`MAX_SELECTION_DEPTH`) stops the merely-deep case; the
+ * per-path visited set stops cycles; and `MAX_SELECTION_FIELDS` stops the
+ * *wide* case that the first two cannot see. Depth alone is no bound on size:
+ * a tree of depth 4 over types with 30 fields is 30^4 positions, and an
+ * interface or union multiplies that again by its member count at every level
+ * it appears. GitHub's `Query.nodes` returns `[Node]`, an interface with some
+ * 250 implementations whose fields are themselves interfaces (`Actor`,
+ * `RepositoryOwner`, …) — under depth and cycle bounds alone its selection
+ * rendered to a 76MB query document and an 8.5MB response schema, and the 300
+ * operations together could not be serialized. The tree is therefore filled
+ * breadth-first against the field budget, so the budget goes to the shallow
+ * fields a caller reads first and the cut, when it comes, is at the deepest
+ * frontier rather than wherever a depth-first walk happened to be.
  */
+import { createHash } from "node:crypto";
 import {
   type GraphQLField,
   type GraphQLInterfaceType,
@@ -46,20 +63,33 @@ type JsonSchemaLike = Record<string, unknown>;
 export const MAX_SELECTION_DEPTH = 4;
 
 /**
- * The deepest JSON nesting level at which an object schema is still rendered
- * inline. `decycle` truncates anonymous schema structure past six levels; an
- * inline object at level 3 puts its field schemas at level 5, the last level
- * that survives. Past this, a non-canonical node falls back to the type's
- * component, and the `graphql_selection_truncated` diagnostic names what the
- * component then over-describes.
+ * How many fields one root field's selection may hold in total, across every
+ * level and every inline fragment.
+ *
+ * This is the bound on the *size* of what one call asks for and promises back;
+ * `MAX_SELECTION_DEPTH` only bounds how far down it reaches. The tree is filled
+ * breadth-first (see `buildSelection`), so the budget is spent on the fields
+ * nearest the root — the ones a caller reads — and every position left over is
+ * cut to `__typename` with a `budget` reason. An object's fields are selected
+ * as a unit: the last expansion that starts may overrun the budget by that one
+ * type's field count, so a wide type at the frontier is either selected whole
+ * or cut whole, never half-listed (a half-listed object would need its own
+ * schema to say which half).
+ *
+ * Measured on GitHub's real schema: with no field budget the 309 operations
+ * compiled to 258MB of AIR; the whole-source compiles of GitHub and Linear
+ * must stay within their corpus size budgets (tools/corpus/baseline.json), and
+ * a query document of a few hundred fields is also what a GraphQL server will
+ * actually accept — GitHub rejects documents past its node and complexity
+ * limits outright.
  */
-const INLINE_MAX_DEPTH = 3;
+export const MAX_SELECTION_FIELDS = 300;
 
 /** The component that stands in wherever the selection stops. */
 export const TYPENAME_ONLY_SCHEMA = "TypenameOnly";
 
 /** Why a selection stops at a node. */
-type SelectionCut = "depth" | "cycle";
+type SelectionCut = "depth" | "cycle" | "budget";
 
 interface SelectionField {
   name: string;
@@ -114,12 +144,47 @@ interface Findings {
   cuts: SelectionCutRecord[];
 }
 
+/**
+ * One selection under construction. Composite positions are not expanded
+ * where they are found: each is placed as a provisional node and its expansion
+ * is queued, so the queue drains level by level (a FIFO of expansions whose
+ * children are enqueued as they run is a breadth-first walk) and `remaining`
+ * is spent on the shallowest positions first.
+ */
+interface Builder {
+  schema: GraphQLSchema;
+  findings: Findings;
+  /** Field positions the tree may still take; an expansion that starts at zero or below is cut. */
+  remaining: number;
+  queue: (() => void)[];
+}
+
+/** Where a node goes once it is decided: a field's `node`, or the root. */
+type Place = (node: SelectionNode) => void;
+
+type ObjectNode = Extract<SelectionNode, { kind: "object" }>;
+type AbstractNode = Extract<SelectionNode, { kind: "abstract" }>;
+
 export function buildSelection(
   schema: GraphQLSchema,
   field: GraphQLField<unknown, unknown>,
+  maxFields = MAX_SELECTION_FIELDS,
 ): Selection {
-  const findings: Findings = { omitted: new Map(), cuts: [] };
-  const root = select(getNamedType(field.type), 0, new Set(), field.name, schema, findings);
+  const builder: Builder = {
+    schema,
+    findings: { omitted: new Map(), cuts: [] },
+    remaining: maxFields,
+    queue: [],
+  };
+  const named = getNamedType(field.type);
+  let root: SelectionNode = { kind: "leaf", type: named };
+  select(named, 0, new Set(), field.name, builder, (node) => {
+    root = node;
+  });
+  // Drain in order. Expansions enqueue their children behind every expansion
+  // already waiting, so depth never decreases along the queue.
+  for (let i = 0; i < builder.queue.length; i++) (builder.queue[i] as () => void)();
+  const { findings } = builder;
   return { root, omittedRequiredArgs: [...findings.omitted.values()], cuts: findings.cuts };
 }
 
@@ -128,52 +193,89 @@ function select(
   depth: number,
   seen: ReadonlySet<string>,
   path: string,
-  schema: GraphQLSchema,
-  findings: Findings,
-): SelectionNode {
-  if (isScalarType(type) || isEnumType(type)) return { kind: "leaf", type };
-  if (!isObjectType(type) && !isInterfaceType(type) && !isUnionType(type)) {
-    return { kind: "leaf", type };
+  builder: Builder,
+  place: Place,
+): void {
+  if (isScalarType(type) || isEnumType(type)) {
+    place({ kind: "leaf", type });
+    return;
   }
-  if (depth >= MAX_SELECTION_DEPTH) return cut(type, "depth", path, findings);
-  if (seen.has(type.name)) return cut(type, "cycle", path, findings);
+  if (!isObjectType(type) && !isInterfaceType(type) && !isUnionType(type)) {
+    place({ kind: "leaf", type });
+    return;
+  }
+  if (depth >= MAX_SELECTION_DEPTH) {
+    place(cut(type, "depth", path, builder.findings));
+    return;
+  }
+  if (seen.has(type.name)) {
+    place(cut(type, "cycle", path, builder.findings));
+    return;
+  }
   const nested = new Set(seen).add(type.name);
 
-  if (isObjectType(type)) {
-    return { kind: "object", type, fields: fieldsOf(type, depth, nested, path, schema, findings) };
+  const possible = isObjectType(type) ? [] : builder.schema.getPossibleTypes(type);
+  // An interface nothing implements is selectable only through its own fields.
+  if (isObjectType(type) || (isInterfaceType(type) && possible.length === 0)) {
+    const node: ObjectNode = { kind: "object", type, fields: [] };
+    place(node);
+    builder.queue.push(() => {
+      if (builder.remaining <= 0) {
+        place(cut(type, "budget", path, builder.findings));
+        return;
+      }
+      node.fields = fieldsOf(type, depth, nested, path, builder);
+    });
+    return;
   }
 
-  const possible = schema.getPossibleTypes(type);
-  if (isInterfaceType(type) && possible.length === 0) {
-    // An interface nothing implements is selectable only through its own fields.
-    return { kind: "object", type, fields: fieldsOf(type, depth, nested, path, schema, findings) };
-  }
-  const own = isInterfaceType(type) ? fieldsOf(type, depth, nested, path, schema, findings) : [];
-  const inherited = new Set(own.map((f) => f.name));
-  const members: SelectionMember[] = possible.map((member) => {
-    const memberPath = `${path}<${member.name}>`;
-    if (nested.has(member.name)) {
-      findings.cuts.push({ path: memberPath, type: member.name, reason: "cycle" });
-      return { type: member, fields: undefined };
+  const abstract: AbstractNode = { kind: "abstract", type, fields: [], members: [] };
+  place(abstract);
+  // One expansion for the interface's own fields and every member's: they are
+  // all fields of the same position, at the same depth, and a member whose
+  // fragment the budget no longer covers is cut to `__typename` exactly as a
+  // member that would re-enter a type is.
+  builder.queue.push(() => {
+    if (builder.remaining <= 0) {
+      place(cut(type, "budget", path, builder.findings));
+      return;
     }
-    const memberSeen = new Set(nested).add(member.name);
-    return {
-      type: member,
-      fields: fieldsOf(member, depth, memberSeen, memberPath, schema, findings, inherited),
-    };
+    const own = isInterfaceType(type) ? fieldsOf(type, depth, nested, path, builder) : [];
+    const inherited = new Set(own.map((f) => f.name));
+    abstract.fields = own;
+    abstract.members = possible.map((member) => {
+      const memberPath = `${path}<${member.name}>`;
+      if (nested.has(member.name)) {
+        builder.findings.cuts.push({ path: memberPath, type: member.name, reason: "cycle" });
+        return { type: member, fields: undefined };
+      }
+      if (builder.remaining <= 0) {
+        builder.findings.cuts.push({ path: memberPath, type: member.name, reason: "budget" });
+        return { type: member, fields: undefined };
+      }
+      const memberSeen = new Set(nested).add(member.name);
+      return {
+        type: member,
+        fields: fieldsOf(member, depth, memberSeen, memberPath, builder, inherited),
+      };
+    });
   });
-  return { kind: "abstract", type, fields: own, members };
 }
 
+/**
+ * Select a type's fields at one position, charging the budget for each, and
+ * queue the expansion of every composite field. Must only be called with
+ * budget remaining — the caller decides whether this expansion starts at all.
+ */
 function fieldsOf(
   type: GraphQLObjectType | GraphQLInterfaceType,
   depth: number,
   seen: ReadonlySet<string>,
   path: string,
-  schema: GraphQLSchema,
-  findings: Findings,
+  builder: Builder,
   exclude: ReadonlySet<string> = new Set(),
 ): SelectionField[] {
+  const { findings } = builder;
   const out: SelectionField[] = [];
   for (const field of Object.values(type.getFields())) {
     if (exclude.has(field.name)) continue;
@@ -188,20 +290,19 @@ function fieldsOf(
       }
       continue;
     }
-    out.push({
+    const named = getNamedType(field.type);
+    const selected: SelectionField = {
       name: field.name,
       type: field.type,
       description: field.description,
-      node: select(
-        getNamedType(field.type),
-        depth + 1,
-        seen,
-        `${path}.${field.name}`,
-        schema,
-        findings,
-      ),
+      node: { kind: "leaf", type: named },
+    };
+    out.push(selected);
+    select(named, depth + 1, seen, `${path}.${field.name}`, builder, (node) => {
+      selected.node = node;
     });
   }
+  builder.remaining -= out.length;
   return out;
 }
 
@@ -213,6 +314,29 @@ function cut(
 ): SelectionNode {
   findings.cuts.push({ path, type: type.name, reason });
   return { kind: "cut", type, reason };
+}
+
+/**
+ * Count the fields a selection holds: what `MAX_SELECTION_FIELDS` bounds. Every
+ * selected field at every level and inside every inline fragment counts once.
+ */
+export function countSelectedFields(node: SelectionNode): number {
+  switch (node.kind) {
+    case "leaf":
+    case "cut":
+      return 0;
+    case "object":
+      return countFields(node.fields);
+    case "abstract":
+      return (
+        countFields(node.fields) +
+        node.members.reduce((n, member) => n + countFields(member.fields ?? []), 0)
+      );
+  }
+}
+
+function countFields(fields: readonly SelectionField[]): number {
+  return fields.reduce((n, field) => n + 1 + countSelectedFields(field.node), 0);
 }
 
 /* ------------------------------- the document ------------------------------ */
@@ -299,75 +423,119 @@ function isCanonical(node: SelectionNode, memo: Map<SelectionNode, boolean>): bo
   return result;
 }
 
+/**
+ * Where the schemas a selection needs are registered: the lowering's
+ * `components.schemas`, shared by every operation of one document.
+ *
+ * A position whose selection is not the type's canonical one cannot point at
+ * the type's component, and it is not rendered inline either. It becomes a
+ * *positional component*: a named entry describing exactly the fields selected
+ * there, referenced with `$ref` like any vendor type. That is what keeps the
+ * agent-facing schema bounded: `materializeSchema` follows `$ref`s to a depth
+ * (one hop by default) and leaves a typed stub beyond it, and a `$ref` is the
+ * only structure it counts. Inline structure is invisible to that bound —
+ * rendering the selection inline for two levels put a GraphQL operation's
+ * output two hops deeper than any REST operation's before the first `$ref` was
+ * even reached, and a single GitHub operation materialized to 200KB. Through
+ * components, a GraphQL operation's output is the same size as a REST one's
+ * for the same type, and an exposure profile's `max_ref_depth` deepens both
+ * alike.
+ *
+ * Positional components are deduplicated by content and named after the type
+ * plus a content hash, so the same selection reached at two positions (or in
+ * two operations) is one entry and the document's size stays proportional to
+ * its distinct selections.
+ */
+export interface SchemaRegistry {
+  /** The components synthesized so far, to merge into `components.schemas`. */
+  positional: Record<string, JsonSchemaLike>;
+  /** Positional component names by canonical body text, for deduplication. */
+  byContent: Map<string, string>;
+  /** Whether a name is already taken by a type of the SDL. */
+  isTypeName: (name: string) => boolean;
+  /** The component every cut position points at. */
+  typenameOnlyName: string;
+}
+
+export function createSchemaRegistry(
+  isTypeName: (name: string) => boolean,
+  typenameOnlyName = TYPENAME_ONLY_SCHEMA,
+): SchemaRegistry {
+  return { positional: {}, byContent: new Map(), isTypeName, typenameOnlyName };
+}
+
 /** The response schema for a root field, wrapped exactly as its declared type is. */
 export function responseSchemaFor(
   field: GraphQLField<unknown, unknown>,
   selection: Selection,
-  typenameOnlyName = TYPENAME_ONLY_SCHEMA,
+  registry: SchemaRegistry = createSchemaRegistry(() => false),
 ): JsonSchemaLike {
-  const memo = new Map<SelectionNode, boolean>();
-  return wrapped(field.type, selection.root, 0, { memo, typenameOnlyName });
+  const ctx: RenderContext = { canonical: new Map(), rendered: new Map(), registry };
+  return wrapped(field.type, selection.root, ctx);
 }
 
 interface RenderContext {
-  memo: Map<SelectionNode, boolean>;
-  typenameOnlyName: string;
+  canonical: Map<SelectionNode, boolean>;
+  /** Positional component names by the node (or member) they were rendered from. */
+  rendered: Map<object, string>;
+  registry: SchemaRegistry;
 }
 
-function wrapped(
-  type: GraphQLOutputType,
-  node: SelectionNode,
-  depth: number,
-  ctx: RenderContext,
-): JsonSchemaLike {
-  if (isNonNullType(type)) return wrapped(type.ofType, node, depth, ctx);
-  if (isListType(type)) return { type: "array", items: wrapped(type.ofType, node, depth + 1, ctx) };
-  return nodeSchema(node, depth, ctx);
+const canon = (value: unknown): string => JSON.stringify(value);
+
+function wrapped(type: GraphQLOutputType, node: SelectionNode, ctx: RenderContext): JsonSchemaLike {
+  if (isNonNullType(type)) return wrapped(type.ofType, node, ctx);
+  if (isListType(type)) return { type: "array", items: wrapped(type.ofType, node, ctx) };
+  return nodeSchema(node, ctx);
 }
 
-function nodeSchema(node: SelectionNode, depth: number, ctx: RenderContext): JsonSchemaLike {
+function nodeSchema(node: SelectionNode, ctx: RenderContext): JsonSchemaLike {
   switch (node.kind) {
     case "leaf":
       return isScalarType(node.type) ? scalarSchema(node.type.name) : ref(node.type.name);
     case "cut":
-      return ref(ctx.typenameOnlyName);
+      return ref(ctx.registry.typenameOnlyName);
     case "object":
-      if (isCanonical(node, ctx.memo) || depth > INLINE_MAX_DEPTH) return ref(node.type.name);
-      return inlineObject(node.type, node.fields, depth, ctx);
-    case "abstract": {
-      // The `oneOf` array and the member inside it are two more levels.
-      if (isCanonical(node, ctx.memo) || depth + 2 > INLINE_MAX_DEPTH) return ref(node.type.name);
-      return {
-        oneOf: node.members.map((member) => memberSchema(node, member, depth + 2, ctx)),
-        description: `${node.type.name}: __typename names which member was returned.`,
-      };
-    }
+      if (isCanonical(node, ctx.canonical)) return ref(node.type.name);
+      return ref(
+        positional(node, node.type.name, () => objectBody(node.type, node.fields, ctx), ctx),
+      );
+    case "abstract":
+      if (isCanonical(node, ctx.canonical)) return ref(node.type.name);
+      return ref(
+        positional(
+          node,
+          node.type.name,
+          () => ({
+            oneOf: node.members.map((member) => memberSchema(node, member, ctx)),
+            description: `${node.type.name}: __typename names which member was returned.`,
+          }),
+          ctx,
+        ),
+      );
   }
 }
 
 function memberSchema(
   abstract: Extract<SelectionNode, { kind: "abstract" }>,
   member: SelectionMember,
-  depth: number,
   ctx: RenderContext,
 ): JsonSchemaLike {
-  if (member.fields === undefined) return ref(ctx.typenameOnlyName);
+  if (member.fields === undefined) return ref(ctx.registry.typenameOnlyName);
   const fields = [...abstract.fields, ...member.fields];
-  const canonical = fields.every((field) => isCanonical(field.node, ctx.memo));
-  if (canonical || depth > INLINE_MAX_DEPTH) return ref(member.type.name);
-  return inlineObject(member.type, fields, depth, ctx);
+  if (fields.every((field) => isCanonical(field.node, ctx.canonical))) return ref(member.type.name);
+  return ref(positional(member, member.type.name, () => objectBody(member.type, fields, ctx), ctx));
 }
 
-function inlineObject(
+function objectBody(
   type: GraphQLObjectType | GraphQLInterfaceType,
   fields: readonly SelectionField[],
-  depth: number,
   ctx: RenderContext,
 ): JsonSchemaLike {
   const properties: Record<string, JsonSchemaLike> = {};
   const required: string[] = [];
   for (const field of fields) {
-    const schema = wrapped(field.type, field.node, depth + 2, ctx);
+    const schema = wrapped(field.type, field.node, ctx);
     if (field.description) schema.description = field.description;
     properties[field.name] = schema;
     if (isNonNullType(field.type)) required.push(field.name);
@@ -381,14 +549,53 @@ function inlineObject(
   };
 }
 
+/**
+ * Register the component for one position and return its name. The body is
+ * rendered at most once per node; an identical body already registered (from
+ * another position or another operation) is reused under its existing name.
+ */
+function positional(
+  key: object,
+  typeName: string,
+  render: () => JsonSchemaLike,
+  ctx: RenderContext,
+): string {
+  const known = ctx.rendered.get(key);
+  if (known !== undefined) return known;
+  const body = render();
+  const content = canon(body);
+  let name = ctx.registry.byContent.get(content);
+  if (name === undefined) {
+    name = positionalName(typeName, content, ctx);
+    ctx.registry.positional[name] = body;
+    ctx.registry.byContent.set(content, name);
+  }
+  ctx.rendered.set(key, name);
+  return name;
+}
+
+/**
+ * `<Type>_at_<hash>`: the type the position returns, then eight hex digits of
+ * the body's content hash. Deterministic for a given SDL, and stepping aside
+ * from any SDL type or earlier (different) body that holds the name.
+ */
+function positionalName(typeName: string, content: string, ctx: RenderContext): string {
+  const digest = createHash("sha256").update(content).digest("hex");
+  for (let width = 8; ; width += 4) {
+    const name = `${typeName}_at_${digest.slice(0, width)}`;
+    if (!ctx.registry.isTypeName(name) && !(name in ctx.registry.positional)) return name;
+  }
+}
+
 /** The component every cut position points at. */
 export function typenameOnlySchema(): JsonSchemaLike {
   return {
     type: "object",
     description:
       "Only __typename is selected here: Anvil's compiled document stops at this position " +
-      `(its selection is bounded to ${MAX_SELECTION_DEPTH} levels and never re-enters a type), ` +
-      "so no other field of the object is returned. Fetch it through a root field of its own.",
+      `(its selection is bounded to ${MAX_SELECTION_DEPTH} levels and ${MAX_SELECTION_FIELDS} ` +
+      "fields in total, and never re-enters a type), so no other field of the object is " +
+      "returned. Fetch it through a root field of its own.",
     properties: {
       __typename: { type: "string", description: "The concrete GraphQL type of this object." },
     },
@@ -401,6 +608,8 @@ export function describeCut(record: SelectionCutRecord): string {
   const why =
     record.reason === "cycle"
       ? `cycle back to ${record.type}`
-      : `depth budget of ${MAX_SELECTION_DEPTH} reached at ${record.type}`;
+      : record.reason === "depth"
+        ? `depth budget of ${MAX_SELECTION_DEPTH} reached at ${record.type}`
+        : `field budget of ${MAX_SELECTION_FIELDS} reached at ${record.type}`;
   return `${record.path} (${why})`;
 }
