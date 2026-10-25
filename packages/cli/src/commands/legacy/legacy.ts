@@ -13,6 +13,7 @@ import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
 import { registerLegacyBridge } from "./bridge.js";
+import { registerLegacyMerge } from "./merge.js";
 import { registerLegacyProduct } from "./product.js";
 import { registerLegacyRefinement } from "./refine.js";
 import { registerLegacyScaffold } from "./scaffold.js";
@@ -21,7 +22,7 @@ import { readLegacySourceSet } from "./source-files.js";
 const REPORT_TYPE = "anvil.legacy-estate-inventory";
 const ERROR_REPORT_TYPE = "anvil.legacy-estate-inventory-error";
 
-interface LegacyInventoryReport {
+export interface LegacyInventoryReport {
   schemaVersion: 1;
   reportType: typeof REPORT_TYPE;
   inventory: LegacyInventoryResult["snapshot"];
@@ -104,6 +105,7 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
   registerLegacyRefinement(legacy, ctx);
   registerLegacyBridge(legacy, ctx);
   registerLegacyProduct(legacy, ctx);
+  registerLegacyMerge(legacy, ctx);
   registerLegacyScaffold(legacy, ctx);
 }
 
@@ -152,7 +154,7 @@ function runLegacyInventory(source: string, options: LegacyInventoryOptions, io:
   }
 }
 
-function buildLegacyInventoryReport(result: LegacyInventoryResult): LegacyInventoryReport {
+export function buildLegacyInventoryReport(result: LegacyInventoryResult): LegacyInventoryReport {
   const diagnostics = { error: 0, warning: 0, info: 0 };
   for (const diagnostic of result.snapshot.diagnostics) diagnostics[diagnostic.level] += 1;
   return {

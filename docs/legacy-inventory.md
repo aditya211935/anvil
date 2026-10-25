@@ -290,6 +290,54 @@ Use the exact `lc_` identifier from the inventory. Unknown dimensions remain in
 the explanation. The command does not rank competing values or choose a binding
 for the reviewer.
 
+## 7b. Merge an estate from several exports
+
+An estate rarely arrives as one export. Production and UAT are captured
+separately, several applications ship their own descriptors, and the source
+repository disagrees with the configuration that is actually deployed. Merge
+the per-export inventories into one verified snapshot instead of reviewing them
+in isolation:
+
+```bash
+pnpm anvil legacy merge refunds-prod.inventory.json refunds-uat.inventory.json \
+  --out refunds.inventory.json
+```
+
+Merge unions artifacts, evidence, and observations by their content-addressed
+ids. The same bytes captured twice collapse into one record; two exports that
+disagree about the same path both survive, because they are different facts.
+The merged observations are reconciled by the same reconciler a single export
+uses, so no second conflict mechanism is introduced and no value is chosen.
+
+Two things are added to the snapshot so provenance and disagreement survive the
+merge:
+
+| Diagnostic | Level | Read it as |
+| --- | --- | --- |
+| `legacy/merge/source` | info | One per input: its `inventoryId` and the environment/application coordinates it covered |
+| `legacy/merge/cross_source_disagreement` | warning | One per logical capability whose deployments disagree on `binding_target`, `idempotency`, `transaction_boundary`, `delivery_guarantee`, or `error_semantics` |
+
+The report also carries `merge.lineages`: for each logical capability, every
+deployment occurrence (coordinate and `lc_` candidate id) and whether their
+claims agree. `agreement` is `single_occurrence`, `consistent`, or `divergent`,
+and `divergentDimensions` names where they differ. A different JNDI name in
+production and UAT is `divergent` on `binding_target`; that is an expected and
+useful result, not a collection error.
+
+The inputs must name the same estate. If they do not, pass `--estate <id>` (and
+optionally `--estate-name`) to assert explicitly that they describe one estate;
+the merge refuses to guess. Merging is order-independent, and merging a snapshot
+with itself returns that snapshot.
+
+The output is a complete inventory report with the same `reportType`, so
+`graph`, `gaps`, `explain`, `diff`, and `refine task` accept it unchanged. Use
+`--check` when CI should fail while any cross-source disagreement remains:
+
+```bash
+pnpm anvil legacy merge refunds-prod.inventory.json refunds-uat.inventory.json \
+  --check --out refunds.inventory.json
+```
+
 ## 8. Read the inventory report
 
 The output contains four kinds of captured fact and a separate reconciliation
