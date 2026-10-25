@@ -284,7 +284,10 @@ and it is gated so that nothing short of the full chain above can reach it:
   same local port number.
 - **One process, one binding, one broker session.** `--json` prints one
   `{ url, port, host, operation, bindingId, broker }` document and keeps
-  serving `POST /invoke` and `GET /readyz` until SIGTERM or SIGINT, then
+  serving `POST /invoke`, `POST /invoke/<operation name>` (the route a bundle
+  lowered by `anvil legacy bridge lower` addresses; another operation's name
+  is refused with `404 not_found`, never forwarded to this binding's queue),
+  and `GET /readyz` until SIGTERM or SIGINT, then
   stops accepting, lets in-flight exchanges finish within the reviewed
   timeout, and closes the broker session.
 
@@ -300,6 +303,70 @@ connected at startup," never "the broker will deliver" — it does not probe
 the session. And serving proves nothing conformance did
 not — the broker, the destination, and the identity are still the plan's
 `unverifiedLiveFacts` until the deployment observes them.
+
+### Lower a reviewed binding into a bundle
+
+```bash
+anvil legacy bridge lower bindings/ \
+  --title "Legacy estate" --service-id legacy \
+  --out-spec legacy.openapi.json --out-manifest legacy.anvil.yaml
+anvil compile legacy.openapi.json --manifest legacy.anvil.yaml --out legacy-bundle
+anvil inspect legacy-bundle
+```
+
+A served facade is one process answering one binding. `lower` is how a
+reviewed binding becomes something an agent can *find*: it projects one or
+more `LegacyCapabilityBinding` JSON files (or directories of them) into an
+OpenAPI 3.0.3 document plus an Anvil manifest, and `anvil compile` then gives
+each reviewed legacy operation the same CLI command, MCP tool, and skill entry
+every other Anvil operation gets — from the same compiler, through the same
+review gate, with no second pipeline to keep honest. Nothing in `lower` is a
+new judgment about the binding; it carries what the review decided:
+
+- **One operation per binding, at the facade's own route.** Each binding
+  becomes `POST /invoke/<operation name>` — the operation-addressed route the
+  facade serves beside `POST /invoke`, produced by the same function in both
+  places, so the path the bundle declares is the path `serve` answers. The
+  `operationId` is the reviewed operation name; summary, description, input
+  schema, and output schema are the reviewed ones; the reviewed error codes
+  ride a `default` response as `x-anvil-legacy-errors`, because a legacy
+  error has no HTTP status and none is invented. `x-anvil-wire-binding` is
+  `buildQueueWireBinding(binding)` verbatim, so the compiled operation's
+  `sourceRef.binding.legacyBindingContentHash` is the true content hash of
+  the reviewed record, and `x-anvil-legacy` records the binding, inventory,
+  candidate, and receipt ids it descends from.
+- **The manifest only tightens.** A binding that is still `not_implemented`,
+  or whose transport the queue bridge cannot execute, is held
+  `state: blocked` — present on every surface as a visible, blocked
+  operation the bundle never executes. A `conformance_passed` binding gets no
+  state at all: the compiler classifies it (`review_required` for a
+  mutation), the conformance report hash lands in its review notes, and
+  approval remains `anvil approve` after `anvil inspect`. A reviewed `never`
+  or `operator_only` retry becomes `retries.enabled: false`; a reviewed
+  idempotency of `none` becomes `strategy: none`; a reviewed `natural` or
+  `client_key` is recorded for a human to read, never asserted. `lower` never
+  writes `approved`.
+- **Unsupported shapes stay visible and refuse honestly.** A `remote_method`,
+  `resource_adapter`, `stored_procedure`, or `batch_job` transport, a message
+  binding with reply mode `none` or `poll_status`, and a message binding whose
+  payload encoding is not JSON are all emitted as blocked operations with no
+  wire binding, and each is listed in the report's `refused[]` with the
+  reason `buildQueueWireBinding` gives. `--executable-only` omits them from
+  the documents; they are still reported.
+- **Deterministic and all-or-nothing.** Operations are sorted by name and
+  every id and hash is content-derived, so the same bindings lower to the
+  same bytes and `--out-*` refuses to overwrite different content. A binding
+  that fails `verifyLegacyCapabilityBinding`, or two bindings that name one
+  operation, refuse the whole lowering with a structured error.
+
+Lowering never enables execution. The compiled operation speaks
+`queue_request_reply`, which the runtime refuses to put on the wire itself;
+it executes only once a human has approved the operation after inspection
+*and* an operator has declared a protocol facade (`--protocol-facade` /
+`ANVIL_PROTOCOL_FACADE`) with `ANVIL_BASE_URL` pointing at `anvil legacy
+bridge serve` for that same `conformance_passed` binding. A facade serving a
+different binding answers the operation's route with `404 not_found` rather
+than forwarding the body to its own queue.
 
 ## Why the bridge belongs near the estate
 

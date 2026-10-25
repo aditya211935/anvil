@@ -809,7 +809,7 @@ Options:
 
 Host the conformance-passed facade on 127.0.0.1 over one STOMP broker connection.
 
-Serves POST /invoke and GET /readyz for exactly one reviewed binding. Refuses unless the binding's runtime status is conformance_passed and --conformance is the exact, fully-passed report that promoted it — a binding edited by hand to claim the status cannot start. Connects one STOMP 1.2 client to --broker with credentials read from ANVIL_LEGACY_BROKER_LOGIN and ANVIL_LEGACY_BROKER_PASSCODE (never from a flag or the URL, never printed). Binds 127.0.0.1 unless --host names another address, which is served with a warning: the facade is unauthenticated HTTP meant to sit beside the runtime as its protocol facade. One transport shape only: a message binding whose reply mode is reply_to or fixed_destination. Serving proves nothing about live readiness that conformance did not — the broker, destination, and identity are still the unverified live facts the bridge plan lists. Stops on SIGTERM or SIGINT.
+Serves POST /invoke, POST /invoke/<operation name> (the route a bundle from `anvil legacy bridge lower` addresses; another operation's name is refused with 404, never forwarded), and GET /readyz for exactly one reviewed binding. Refuses unless the binding's runtime status is conformance_passed and --conformance is the exact, fully-passed report that promoted it — a binding edited by hand to claim the status cannot start. Connects one STOMP 1.2 client to --broker with credentials read from ANVIL_LEGACY_BROKER_LOGIN and ANVIL_LEGACY_BROKER_PASSCODE (never from a flag or the URL, never printed). Binds 127.0.0.1 unless --host names another address, which is served with a warning: the facade is unauthenticated HTTP meant to sit beside the runtime as its protocol facade. One transport shape only: a message binding whose reply mode is reply_to or fixed_destination. Serving proves nothing about live readiness that conformance did not — the broker, destination, and identity are still the unverified live facts the bridge plan lists. Stops on SIGTERM or SIGINT.
 
 Options:
 - `--conformance <file>` — the conformance report that promoted the binding
@@ -819,6 +819,21 @@ Options:
 - `--port <n>` — port on the bind address (default: a free port)
 - `--host <address>` — bind address (default: 127.0.0.1); a non-loopback address is served only when given here, with a warning
 - `--json` — print one { url, port } document, then keep serving
+
+##### `anvil legacy bridge lower`  *(mutates)*
+`anvil legacy bridge lower [options] <binding...>`
+
+Lower reviewed bindings into an OpenAPI document and manifest for anvil compile.
+
+Projects one or more reviewed LegacyCapabilityBinding JSON files (or directories of them) into an OpenAPI 3.0.3 document plus an Anvil manifest, so `anvil compile` gives each reviewed legacy operation the same CLI + MCP + skill triad every other operation gets. Each operation is POST /invoke/<operation name> — the route `anvil legacy bridge serve` answers for that binding — and carries the queue request/reply wire binding derived from the reviewed binding by content hash. Lowering never enables execution: a binding that has not passed conformance, or whose transport the queue bridge cannot execute, is held `state: blocked`; a conformance_passed binding is left to the compiler's own classification and still needs `anvil approve` after inspection; reviewed idempotency and retry semantics are carried only where they tighten. The runtime executes an approved operation only when an operator declares a protocol facade pointing at a served, conformance_passed binding. Refuses a binding that fails verification and two bindings that name one operation.
+
+Options:
+- `--title <title>` — the lowered document's info.title (the bundle's name)
+- `--out-spec <file>` — write the OpenAPI document here (no overwrite of different content)
+- `--out-manifest <file>` — write the Anvil manifest YAML here (no overwrite of different content)
+- `--service-id <id>` — record a service name in the manifest; anvil compile derives one otherwise
+- `--executable-only` — omit bindings the queue bridge cannot execute instead of emitting them blocked
+- `--json` — emit the complete lowering report, documents included
 
 #### `anvil legacy plan`  *(mutates)*
 `anvil legacy plan [options] <manifest>`

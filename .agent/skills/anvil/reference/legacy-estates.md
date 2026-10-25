@@ -208,10 +208,35 @@ not earned by the same reviewed capability — editing the JSON cannot start
 it. Broker credentials come from those two environment variable names only
 and are never printed. It binds 127.0.0.1; `--host` serves another address
 with a warning. It prints `{ url, port }` under `--json`, serves
-`POST /invoke` and `GET /readyz`, and stops on SIGTERM. Serving is the
-first live connection in this workflow, and it proves nothing conformance
-did not: the broker, destination, and identity are still the plan's
-unverified live facts until the deployment observes them.
+`POST /invoke`, `POST /invoke/<operation name>` (the route a lowered bundle
+addresses; another operation's name is refused with 404, never forwarded),
+and `GET /readyz`, and stops on SIGTERM. Serving is the first live
+connection in this workflow, and it proves nothing conformance did not: the
+broker, destination, and identity are still the plan's unverified live facts
+until the deployment observes them.
+
+Give the reviewed binding the same CLI + MCP + skill triad as every other
+operation by lowering it into inputs `anvil compile` already understands:
+
+```bash
+anvil legacy bridge lower bindings/ --title "Legacy estate" --service-id legacy \
+  --out-spec legacy.openapi.json --out-manifest legacy.anvil.yaml
+anvil compile legacy.openapi.json --manifest legacy.anvil.yaml --out legacy-bundle
+anvil inspect legacy-bundle
+```
+
+`lower` accepts bindings of every transport family and never enables
+execution. One OpenAPI operation per binding at `POST /invoke/<operation
+name>` carrying the queue wire binding by content hash; a binding still
+`not_implemented`, or one the queue bridge cannot execute (any other
+transport kind, reply mode `none`/`poll_status`, a non-JSON payload), is
+held `state: blocked` and listed in the report's `refused[]`; a
+`conformance_passed` binding gets no manifest state at all — the compiler
+classifies it and `anvil approve` after `anvil inspect` remains the only
+way to approve. Reviewed retry and idempotency semantics are carried only
+where they tighten. The compiled operation still refuses to execute until an
+operator declares a protocol facade pointing `ANVIL_BASE_URL` at `serve`
+for that same binding.
 
 The honest limits: one protocol client (a zero-dependency STOMP 1.2 client
 over `node:net`, chosen — and documented in its own file header — as the
