@@ -210,6 +210,56 @@ Generic middleware tools discard the schema, effect, authorization, completion,
 and retry constraints that make a capability safe enough to review. They also
 give a harness more transport authority than the business operation requires.
 
+## Scaffold a contract from source
+
+Some estates expose HTTP already but never published a contract: the routes
+live in controller source. `anvil legacy scaffold <dir>` reads that source as
+inert text and drafts an OpenAPI 3 document the ordinary `anvil compile`
+pipeline reads. Every operation records the file and line it was read from
+under `x-anvil-evidence`; a path whose method the source does not declare is
+kept under `x-anvil-scaffold.unmapped` instead of being guessed; and the draft
+carries no description, example or success semantics the source did not state,
+so mutations land `review_required` exactly as they would from a vendor spec.
+
+### .NET source (ASP.NET, ASMX)
+
+The `dotnet` lane reads `.cs`, `.asmx` and `.asmx.cs` members. Nothing is
+compiled or loaded: comments, string contents and preprocessor lines are
+blanked before attributes are scanned, so `// [HttpGet]` in a comment is never a
+route, while attribute arguments such as `[Route("api/[controller]")]` are
+read at their exact offset.
+
+| Framework | What is read | Path proof |
+| --- | --- | --- |
+| `aspnet_core` | `[ApiController]`, `[Route]`, `[HttpGet]`…`[HttpOptions]` with optional templates, `[AcceptVerbs]`, `[Consumes]`/`[Produces]`, `[FromRoute]`/`[FromQuery]`/`[FromHeader]`/`[FromBody]`/`[FromForm]` with `Name=` | The attribute templates themselves. `[controller]`/`[action]` expand to the class name minus `Controller` and the method name; `{id:int}` becomes `{id}` with an integer schema; `{id?}` and `{*path}` are recorded with warnings because OpenAPI path parameters are required and single-segment. |
+| `aspnet_webapi` | Controllers deriving from `ApiController`: `[RoutePrefix]`/`[Route]`, verb attributes, or the `Get*`/`Post*`/`Put*`/`Delete*` action-name convention | Attribute routes as declared. Convention-routed actions are expanded only against a `routes.MapHttpRoute(…, "api/{controller}/{id}", …)` template found in the same source set; without one they are left unmapped with `route_template_unknown`. No prefix is ever guessed. |
+| `asmx` | `[WebService]` classes and their `[WebMethod]`s (`MessageName` honoured) | `POST /<File>.asmx/<Method>` only when the `.asmx` file with a matching `Class=` is present; otherwise unmapped with `activation_file_missing`. |
+
+Binding sources are read from attributes when declared. When a parameter has
+none, the ASP.NET Core `[ApiController]` convention is applied — a simple type
+matching a route token is a path parameter, other simple types are query
+parameters, complex types are the body — and the parameter's evidence says
+`construct: "inferred_binding"` so a reviewer can tell convention from
+declaration. On a controller that is not an `[ApiController]`, an undeclared
+complex-type binding is reported and not recorded.
+
+Declared types are projected, never widened: `int`/`long` → integer,
+`decimal`/`double` → number, `Guid` → `uuid`, `DateTime`/`DateTimeOffset` →
+`date-time`, `T?` keeps `T` with `x-anvil-source-type: "T?"`, collections →
+arrays, `Task<T>`/`ActionResult<T>` unwrap to `T`, an `enum` declared in the
+source set contributes its member names, and a DTO class or record declared in
+the source set contributes its public property names and types. Anything else
+is an open object that records the source type. `operationId` is
+`<ControllerClass>.<Method>`; overloads and multi-verb actions are suffixed
+(`_1`, `_get`) with an info diagnostic. Diagnostics live under
+`legacy/scaffold/aspnet_core/…`, `legacy/scaffold/aspnet_webapi/…` and
+`legacy/scaffold/asmx/…`; a route whose template would carry a secret-like
+value is refused rather than written into the draft.
+
+See [`examples/legacy-orders-dotnet`](../examples/legacy-orders-dotnet/README.md)
+for a fixture that walks `anvil legacy scaffold` → `anvil compile` →
+`anvil inspect` across all three frameworks.
+
 ## Current product boundary
 
 Inventory, refinement, bridge-contract planning, and static driver-descriptor
