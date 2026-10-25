@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-15T04:14:18.690Z",
+  "updatedAt": "2026-10-25T00:00:00.000Z",
   "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
@@ -64,8 +64,8 @@
     },
     "github_gql": {
       "compileMs": 2170,
-      "airBytes": 4182097,
-      "opCount": 299
+      "airBytes": 9217960,
+      "opCount": 309
     },
     "temporal": {
       "compileMs": 732,
@@ -89,8 +89,8 @@
     },
     "linear": {
       "compileMs": 3529,
-      "airBytes": 7654237,
-      "opCount": 611
+      "airBytes": 13897718,
+      "opCount": 653
     },
     "amadeus": {
       "compileMs": 722,
@@ -105,7 +105,7 @@
     "odata_trippin": {
       "compileMs": 534,
       "airBytes": 118602,
-      "opCount": 20
+      "opCount": 25
     },
     "odata_northwind": {
       "compileMs": 712,
@@ -120,7 +120,7 @@
     "okta": {
       "compileMs": 5265,
       "airBytes": 8186846,
-      "opCount": 732
+      "opCount": 731
     },
     "docusign_clm": {
       "compileMs": 692,
@@ -135,7 +135,7 @@
     "datadog": {
       "compileMs": 9556,
       "airBytes": 14658180,
-      "opCount": 1409
+      "opCount": 1687
     },
     "xero": {
       "compileMs": 1053,
@@ -145,7 +145,7 @@
     "box": {
       "compileMs": 2481,
       "airBytes": 4109446,
-      "opCount": 294
+      "opCount": 297
     },
     "adyen": {
       "compileMs": 1805,
@@ -165,12 +165,12 @@
     "shopware": {
       "compileMs": 7872,
       "airBytes": 16969024,
-      "opCount": 1109
+      "opCount": 1122
     },
     "plaid": {
       "compileMs": 3607,
       "airBytes": 6614559,
-      "opCount": 331
+      "opCount": 350
     }
   }
 }
