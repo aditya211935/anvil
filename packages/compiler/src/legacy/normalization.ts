@@ -360,7 +360,7 @@ export function normalizeDiagnostic(
   };
 }
 
-function emitObservation(
+export function emitObservation(
   state: NormalizationState,
   input: {
     collectorId: string;
@@ -389,7 +389,7 @@ function emitObservation(
   );
 }
 
-function evidenceFor(
+export function evidenceFor(
   state: NormalizationState,
   collectorId: string,
   coordinates: readonly EvidenceCoordinate[],
@@ -417,7 +417,7 @@ function evidenceFor(
   return [...new Set(evidenceIds)].sort();
 }
 
-function technicalClaims(
+export function technicalClaims(
   name: string,
   evidenceIds: string[],
   basis: LegacyEvidenceBasis,
@@ -471,7 +471,7 @@ function addErrorClaim(
   if (value) claims.push(claim("error_semantics", bounded(value, 2048), evidenceIds, "configured"));
 }
 
-function claim(
+export function claim(
   dimension: LegacyClaim["dimension"],
   value: LegacyClaim["value"],
   evidenceIds: string[],
@@ -514,7 +514,7 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function stringArray(value: unknown): string[] {
+export function stringArray(value: unknown): string[] {
   const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   return [
     ...new Set(
@@ -525,7 +525,7 @@ function stringArray(value: unknown): string[] {
   ].sort();
 }
 
-function bounded(value: string, max: number): string {
+export function bounded(value: string, max: number): string {
   let printable = "";
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;

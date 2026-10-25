@@ -188,7 +188,12 @@ pnpm anvil legacy inventory ./mq-export \
   --out refunds-mq.inventory.json
 ```
 
-Valid collector values are `auto`, `java-ee`, `dotnet`, and `messaging`.
+Valid collector values are `auto`, `java-ee`, `dotnet`, `messaging`, and
+`mainframe`. The `mainframe` lane reads JCL job and procedure members as inert
+text and records COBOL copybooks as schema artifacts; see
+[the estate guide](legacy-estates.md#mainframe-batch-jcl-and-cobol-copybooks)
+for what it does and does not infer, and `anvil legacy schema copybook` to turn
+one copybook into a JSON Schema.
 
 `auto` does not depend only on familiar filenames. It examines a bounded prefix
 for supported signatures, including Java EJB annotations, WebLogic/JBoss XML

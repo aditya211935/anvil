@@ -31,8 +31,8 @@ anvil legacy inventory <offline-export> \\
 \`\`\`
 
 The default \`auto\` lane runs only applicable offline collectors. Select
-\`--collector java-ee\`, \`dotnet\`, or \`messaging\` when a collection is
-intentionally limited to one vocabulary. Use \`--source-kind\` and \`--source-id\`
+\`--collector java-ee\`, \`dotnet\`, \`messaging\`, or \`mainframe\` when a
+collection is intentionally limited to one vocabulary. Use \`--source-kind\` and \`--source-id\`
 to preserve where the evidence came from; use \`--check\` when CI must stop on
 unresolved conflicts.
 
@@ -70,7 +70,13 @@ when Anvil should enforce the bounded, no-symlink filesystem boundary.
   configuration; DLL and EXE files are digest-only; and
 - AsyncAPI, IBM MQ MQSC/CCDT, Artemis, allowlisted RabbitMQ topology, Kafka
   Admin and Schema Registry shapes, and Strimzi \`KafkaTopic\` and
-  \`KafkaConnector\` resources.
+  \`KafkaConnector\` resources; and
+- JCL job and procedure members read as inert text (steps, \`DISP\`-declared
+  datasets, \`COND\`/\`IF\` thresholds) with COBOL copybooks recorded as schema
+  artifacts; in-stream data is never copied, and \`PASSWORD=\` members are
+  refused. \`anvil legacy schema copybook <file>\` turns one copybook into a
+  JSON Schema whose field names stay verbatim and whose fields record their
+  COBOL declaration, offset, and byte length under \`x-anvil-cobol\`.
 
 Supply regular files or an already hardened-expanded directory. The CLI refuses
 symbolic links and never opens an EAR, WAR, RAR, ZIP, or other nested archive.
