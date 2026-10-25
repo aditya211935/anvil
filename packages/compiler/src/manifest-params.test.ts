@@ -105,9 +105,10 @@ paths:
       ].join("\n"),
     });
     const op = air.operations[0];
-    const from = (op?.input.body?.schema.properties as Record<string, Record<string, unknown>>)
-      .from;
-    const id = (from?.properties as Record<string, Record<string, unknown>>).id;
+    if (!op?.input.body) throw new Error("createConversation did not compile with a body");
+    const from = (op.input.body.schema.properties as Record<string, Record<string, unknown>>).from;
+    if (!from) throw new Error("body has no `from` property");
+    const id = (from.properties as Record<string, Record<string, unknown>>).id;
     expect(id).toEqual({
       type: "string",
       pattern: "^[0-9a-f]{24}$",
