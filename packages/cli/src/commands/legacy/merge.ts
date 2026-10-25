@@ -41,7 +41,7 @@ interface CollectorTotals {
  * field adds provenance and cross-source agreement without altering the
  * inventory fields those commands verify.
  */
-export interface LegacyMergeReport extends LegacyInventoryReport {
+interface LegacyMergeReport extends LegacyInventoryReport {
   merge: {
     sources: LegacyMergeSource[];
     lineages: LegacyMergeLineage[];

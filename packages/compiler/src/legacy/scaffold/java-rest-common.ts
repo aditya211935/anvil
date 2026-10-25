@@ -94,7 +94,7 @@ export function normalizePathTemplate(template: string): string {
   return out;
 }
 
-export function hasPropertyPlaceholder(template: string): boolean {
+function hasPropertyPlaceholder(template: string): boolean {
   return /\$\{[^}]*\}/u.test(template);
 }
 

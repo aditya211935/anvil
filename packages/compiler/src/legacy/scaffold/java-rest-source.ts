@@ -396,7 +396,7 @@ function parseParameter(
 }
 
 /** Collapse whitespace so `Map< String , Object >` and `Map<String, Object>` read alike. */
-export function normalizeType(type: string): string {
+function normalizeType(type: string): string {
   return type
     .replace(/\s+/gu, " ")
     .replace(/\s*([<>,[\].?])\s*/gu, "$1")
@@ -407,7 +407,7 @@ export function normalizeType(type: string): string {
 }
 
 /** Split at top-level commas; angle brackets, parentheses, brackets and braces nest. */
-export function splitTopLevel(text: string, offset: number): { text: string; start: number }[] {
+function splitTopLevel(text: string, offset: number): { text: string; start: number }[] {
   const pieces: { text: string; start: number }[] = [];
   let depth = 0;
   let start = 0;

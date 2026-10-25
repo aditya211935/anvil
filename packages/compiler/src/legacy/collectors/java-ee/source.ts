@@ -337,7 +337,7 @@ export function scanAnnotations(source: string): Annotation[] {
   return out;
 }
 
-export function readAnnotation(source: string, start: number): Annotation | undefined {
+function readAnnotation(source: string, start: number): Annotation | undefined {
   const nameMatch = /^@([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/u.exec(source.slice(start));
   if (!nameMatch) return undefined;
   const name = nameMatch[1] as string;

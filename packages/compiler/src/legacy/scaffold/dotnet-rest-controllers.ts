@@ -86,7 +86,7 @@ const INFRASTRUCTURE_TYPES = new Set([
 ]);
 const FORM_FILE_TYPES = new Set(["IFormFile", "IFormFileCollection"]);
 
-export function isController(decl: CSharpTypeDecl, methods: readonly CSharpMethod[]): boolean {
+function isController(decl: CSharpTypeDecl, methods: readonly CSharpMethod[]): boolean {
   if (decl.kind !== "class" || decl.modifiers.includes("abstract") || !decl.body) return false;
   if (has(decl.attributes, "NonController")) return false;
   if (has(decl.attributes, "ApiController") || has(decl.attributes, "Route")) return true;

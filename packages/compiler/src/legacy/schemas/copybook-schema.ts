@@ -237,7 +237,7 @@ function elementaryByteLength(
   }
 }
 
-export function normalizeUsage(usage: string | undefined): string | undefined {
+function normalizeUsage(usage: string | undefined): string | undefined {
   if (!usage) return undefined;
   const upper = usage.toUpperCase();
   const map: Record<string, string> = {

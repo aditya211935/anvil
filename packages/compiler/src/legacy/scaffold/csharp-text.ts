@@ -17,7 +17,7 @@ export interface CSharpText {
   lineStarts: number[];
 }
 
-export interface CSharpAttributeArg {
+interface CSharpAttributeArg {
   kind: "string" | "typeof" | "other";
   /** The literal value, the `typeof` operand, or the raw text. */
   value: string;

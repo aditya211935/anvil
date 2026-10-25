@@ -65,7 +65,7 @@ export interface CSharpProperty {
 const MAX_HEADER_CHARS = 16 * 1024;
 
 /** A C# type expression: dotted name, bounded generic nesting, `?`, array ranks. */
-export const TYPE_PATTERN = String.raw`[A-Za-z_][\w.]*(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?\??(?:\[\s*,*\s*\]\??)*`;
+const TYPE_PATTERN = String.raw`[A-Za-z_][\w.]*(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?\??(?:\[\s*,*\s*\]\??)*`;
 
 const TYPE_HEADER =
   /^(class|record\s+class|record\s+struct|record|struct|interface|enum)\s+([A-Za-z_]\w*)\s*(<[^>]*>)?\s*/;
@@ -226,7 +226,7 @@ export function classMembers(decl: CSharpTypeDecl): {
 }
 
 /** Parse a `(` … `)` parameter list given the offsets just inside the parentheses. */
-export function parseParameterList(file: CSharpText, from: number, to: number): CSharpParameter[] {
+function parseParameterList(file: CSharpText, from: number, to: number): CSharpParameter[] {
   const parameters: CSharpParameter[] = [];
   for (const part of splitTopLevel(file.masked, from, to)) {
     const { attributes, next } = parseAttributeSections(file, part.start, part.end);

@@ -11,7 +11,7 @@ export interface SqlUnit {
  * A quoted or bare SQL identifier. Bracketed and double-quoted spellings are
  * accepted in both dialects so a mixed export still segments predictably.
  */
-export const IDENTIFIER = String.raw`(?:"[^"\n]+"|\[[^\]\n]+\]|[A-Za-z_][\w$#]*)`;
+const IDENTIFIER = String.raw`(?:"[^"\n]+"|\[[^\]\n]+\]|[A-Za-z_][\w$#]*)`;
 export const QUALIFIED_NAME = String.raw`${IDENTIFIER}(?:\s*\.\s*${IDENTIFIER}){0,2}`;
 
 const UNIT_BOUNDARY = new RegExp(
@@ -76,7 +76,7 @@ export function splitTopLevel(text: string): string[] {
   return parts.map((part) => part.trim()).filter((part) => part.length > 0);
 }
 
-export function normalizeIdentifier(raw: string, dialect: DatabaseDialect): string {
+function normalizeIdentifier(raw: string, dialect: DatabaseDialect): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1).trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed.slice(1, -1).trim();
@@ -90,7 +90,7 @@ export function splitQualifiedName(raw: string, dialect: DatabaseDialect): strin
   return parts;
 }
 
-export function normalizeType(raw: string): string {
+function normalizeType(raw: string): string {
   return raw
     .replace(/\s+/g, " ")
     .replace(/\s*([(),])\s*/g, "$1")
@@ -177,6 +177,6 @@ export function canonicalParameters(parameters: readonly DatabaseParameter[]): s
     .join(", ")})`;
 }
 
-export function modeKeyword(mode: DatabaseParameter["mode"]): string {
+function modeKeyword(mode: DatabaseParameter["mode"]): string {
   return mode === "inout" ? "IN OUT" : mode.toUpperCase();
 }

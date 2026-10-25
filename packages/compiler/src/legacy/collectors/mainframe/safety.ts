@@ -21,10 +21,6 @@ export function isCopybookPath(path: string): boolean {
   return /\.(?:cpy|cob|cbl|cpb)$/i.test(path);
 }
 
-export function isJclPath(path: string): boolean {
-  return /\.(?:jcl|proc|prc)$/i.test(path) || /(?:^|\/)(?:jcl|proclib)\//i.test(path);
-}
-
 /**
  * Accept bounded, UTF-8 text members. EBCDIC members must be transcoded by the
  * exporting pipeline first; this collector never guesses a code page. Members
@@ -108,7 +104,7 @@ export function acceptMainframeArtifacts(inputs: readonly MainframeArtifactInput
   return { artifacts, diagnostics };
 }
 
-export function containsSecretLikeOperand(text: string): boolean {
+function containsSecretLikeOperand(text: string): boolean {
   return /(?:^|[\s,(/])(?:PASSWORD|PASSWD|PASSWRD|PWD)\s*=/i.test(text);
 }
 

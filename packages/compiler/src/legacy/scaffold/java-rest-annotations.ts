@@ -31,7 +31,7 @@ type Token =
   | { kind: "number"; value: string }
   | { kind: "punct"; value: string };
 
-export function emptyArguments(): AnnotationArguments {
+function emptyArguments(): AnnotationArguments {
   return { named: new Map(), malformed: false };
 }
 
