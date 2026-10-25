@@ -1,9 +1,9 @@
 # Legacy application estates
 
-Anvil can turn offline Java EE, .NET Framework, messaging, and stored-procedure DDL evidence into
-an evidence-backed inventory of possible invocation boundaries. It can then
-help a coding harness describe one candidate as a business operation and bind a
-human review to that exact proposal.
+Anvil can turn offline Java EE, .NET Framework, messaging, stored-procedure DDL,
+and JCL batch configuration into an evidence-backed inventory of possible
+invocation boundaries. It can then help a coding harness describe one candidate
+as a business operation and bind a human review to that exact proposal.
 
 It does not yet execute the approved binding. Today, the workflow ends with a
 reviewed, content-addressed plan whose runtime status is `not_implemented`.
@@ -188,6 +188,57 @@ The collector explicitly does not infer:
 - T-SQL function contracts: a `CREATE FUNCTION` unit is recorded as evidence
   with `legacy/database/tsql_function_unsupported` and projects no candidate; or
 - business meaning: `post_entry` is a technical name, not a business operation.
+
+### Mainframe batch (JCL) and COBOL copybooks
+
+The `mainframe` lane reads JCL as inert, 80-column text and COBOL copybooks as
+record layouts. It never submits a job, resolves a cataloged procedure, opens a
+dataset, or guesses a code page: members must already be UTF-8 text.
+
+What is read:
+
+- `JOB`, `EXEC PGM=`, `EXEC PROC=` / `EXEC name`, `DD` with `DSN=` and `DISP=`,
+  `PARM=`, `COND=`, `IF/THEN/ELSE/ENDIF`, `JCLLIB ORDER=`, same-member `SET`
+  symbols, `INCLUDE MEMBER=`, in-stream `PROC ... PEND`, comma continuation
+  cards, and `//*` comments;
+- `.jcl`, `.proc`, and members under a `JCL/` or `PROCLIB/` directory, plus any
+  text member that begins with a `JOB` or `PROC` card in `auto` mode; and
+- `.cpy`, `.cob`, and `.cbl` copybooks, recorded as `schema` artifacts.
+
+What it yields: one `batch_job` observation per `JOB` (scheduler reference
+`jes`, or the declared `JCLLIB ORDER`) and one per `PROC` member (`proclib`).
+Every claim is `declared`: the ordered step list `NNN:STEP:PGM=...` is the
+`binding_target`; datasets opened with `DISP=SHR` or `OLD` are `input_schema`
+references and `NEW` or `MOD` are `output_schema` references, prefixed `dsn:`;
+`COND=` and `IF` relational expressions are `error_semantics`; the
+interaction pattern is `batch`. A copybook is linked as
+`copybook:<path>` only when a DD names its PDS member, as in
+`DSN=PROD.COPYLIB(CUSTREC)`; otherwise it is only a recorded artifact.
+
+What is not inferred: idempotency, restartability, run frequency, what a
+program does, or the record layout of a dataset that no copybook member name
+proves. `&SYMBOL` values are resolved only from a `SET` in the same member;
+`&&TEMP` names stay verbatim and are excluded from schema references.
+`INCLUDE` members are reported, never followed. In-stream data after `DD *` or
+`DD DATA` is skipped up to its delimiter: only its existence is recorded. A
+member carrying a `PASSWORD=` or `PASSWD=` operand is refused as a whole with
+`legacy/mainframe/secret_like_value`.
+
+`anvil legacy schema copybook <file>` converts one copybook into a draft-07
+JSON Schema. Field names stay verbatim (`CUST-ID`, never `customerId`), and
+every field records its declaration, level, offset, byte length, usage, and
+picture under `x-anvil-cobol`. `PIC X(n)`/`A(n)` become bounded strings;
+`9(n)` becomes an integer, or a string with a pattern above 15 digits so the
+value stays exact; `V` scales become numbers with `multipleOf`; `OCCURS` becomes
+an array with `minItems`/`maxItems` and `DEPENDING ON` recorded; `REDEFINES`
+becomes a `oneOf` at the parent with offsets retained; `88` literal values
+become `enum` candidates on the parent and are listed under `conditions`;
+`FILLER` is counted in the byte length but not named; `66 RENAMES` is recorded,
+not modelled. Byte lengths follow DISPLAY (digits plus a separate sign),
+`COMP-3` (`ceil((digits + 1) / 2)`), and `COMP`/`BINARY` (2, 4, or 8 bytes)
+rules; `SYNC` slack bytes are not applied and are flagged. `COPY` statements
+are reported as `legacy/copybook/copy_not_followed`. The schema says what the
+bytes are, not what they mean.
 
 ### Content detection and explicit unknowns
 

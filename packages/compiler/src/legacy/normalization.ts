@@ -428,7 +428,7 @@ export function evidenceFor(
   return [...new Set(evidenceIds)].sort();
 }
 
-function technicalClaims(
+export function technicalClaims(
   name: string,
   evidenceIds: string[],
   basis: LegacyEvidenceBasis,
@@ -525,7 +525,7 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function stringArray(value: unknown): string[] {
+export function stringArray(value: unknown): string[] {
   const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   return [
     ...new Set(

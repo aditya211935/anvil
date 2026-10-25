@@ -17,6 +17,7 @@ import { registerLegacyMerge } from "./merge.js";
 import { registerLegacyProduct } from "./product.js";
 import { registerLegacyRefinement } from "./refine.js";
 import { registerLegacyScaffold } from "./scaffold.js";
+import { registerLegacySchema } from "./schema.js";
 import { registerLegacyScorecard } from "./scorecard.js";
 import { readLegacySourceSet } from "./source-files.js";
 
@@ -65,9 +66,9 @@ class LegacyInventoryCommandError extends Error {
 export function registerLegacy(parent: Command, ctx: CommandContext): void {
   const legacy = parent
     .command("legacy")
-    .summary("Inventory offline legacy application, messaging, and database evidence.")
+    .summary("Inventory offline legacy application, messaging, database, and batch evidence.")
     .description(
-      "Discover evidence-backed EJB, WCF, resource-adapter, messaging, and stored-procedure invocation candidates from caller-supplied offline exports. Collection never connects to a server, broker, or database, loads an assembly, executes bytecode or SQL, opens an archive, reads a queue, or invents business semantics.",
+      "Discover evidence-backed EJB, WCF, resource-adapter, messaging, stored-procedure, and JCL batch-job invocation candidates from caller-supplied offline exports. Collection never connects to a server, broker, or database, loads an assembly, executes bytecode or SQL, opens an archive, reads a queue, submits a job, or invents business semantics.",
     );
 
   annotate(
@@ -75,7 +76,7 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
       .command("inventory")
       .summary("Build a content-addressed legacy estate inventory without invoking the estate.")
       .description(
-        "Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, supported broker or AsyncAPI exports, and PL/SQL or T-SQL stored-procedure DDL. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.",
+        "Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, supported broker or AsyncAPI exports, PL/SQL or T-SQL stored-procedure DDL, and JCL job/procedure members with COBOL copybooks. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.",
       )
       .argument("<source>", "offline export file or hardened-expanded directory")
       .requiredOption("--environment <id>", "deployment environment coordinate")
@@ -109,6 +110,7 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
   registerLegacyMerge(legacy, ctx);
   registerLegacyScaffold(legacy, ctx);
   registerLegacyScorecard(legacy, ctx);
+  registerLegacySchema(legacy, ctx);
 }
 
 function runLegacyInventory(source: string, options: LegacyInventoryOptions, io: CliIO): number {
