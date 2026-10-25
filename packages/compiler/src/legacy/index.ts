@@ -6,3 +6,4 @@ export * from "./core/index.js";
 export * from "./inventory.js";
 export * from "./product/index.js";
 export * from "./refinement/index.js";
+export * from "./scaffold/index.js";
