@@ -72,3 +72,40 @@ export function truncateToStub(
       : TRUNCATION_NOTE;
   return stub;
 }
+
+/**
+ * Schema keywords whose value is a list that, emptied, admits NOTHING: an empty
+ * `enum` allows no value, an empty `oneOf`/`anyOf` has no alternative to
+ * match, and an empty `type` list names no type. Every other list keyword
+ * (`required`, `allOf`, `examples`, …) only loosens when emptied.
+ */
+const REFUSING_WHEN_EMPTY = ["enum", "oneOf", "anyOf", "type"] as const;
+
+/**
+ * A bounded walk truncates an array node to `[]` ({@link truncateToStub}),
+ * which is the right stub for a scope list or a `required` list but turns a
+ * constraint list into a refusal of every value: Stripe's `tax_id_data[].type`
+ * lost its 100-entry `enum` to the node budget and the generated MCP server
+ * then rejected every string as `never`. A truncated constraint must loosen,
+ * never tighten, so a list the source filled and the walk emptied is dropped —
+ * the value stays typed by what remains — and the schema says so. Called on
+ * the walked copy of every schema object with its source; returns the copy.
+ */
+export function dropEmptiedKeywords(
+  source: unknown,
+  out: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof source !== "object" || source === null || Array.isArray(source)) return out;
+  const from = source as Record<string, unknown>;
+  for (const keyword of REFUSING_WHEN_EMPTY) {
+    const was = from[keyword];
+    const now = out[keyword];
+    if (!Array.isArray(was) || was.length === 0 || !Array.isArray(now) || now.length !== 0)
+      continue;
+    delete out[keyword];
+    if (keyword === "oneOf" || keyword === "anyOf") delete out.discriminator;
+    const note = `(\`${keyword}\` with ${was.length} entries truncated by Anvil to keep the schema bounded; any value of the remaining type is accepted here)`;
+    out.description = typeof out.description === "string" ? `${out.description} ${note}` : note;
+  }
+  return out;
+}

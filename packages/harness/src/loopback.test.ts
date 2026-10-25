@@ -208,3 +208,70 @@ describe("loopback self-test (storefront, GraphQL)", () => {
     expect(report.summary.fail).toBe(0);
   }, 120_000);
 });
+
+describe("loopback self-test (schema features fixture)", () => {
+  const fixtures = fileURLToPath(new URL("../../../examples/fixtures/", import.meta.url));
+  const spec = readFileSync(join(fixtures, "selftest-schema-features.yaml"), "utf8");
+
+  it("synthesizes arguments every tool accepts: formats, bounds, unions, a form body", async () => {
+    const air = await compile({
+      spec,
+      manifest: readFileSync(join(fixtures, "selftest-schema-features.anvil.yaml"), "utf8"),
+      serviceId: "features",
+    });
+    const dir = mkdtempSync(join(tmpdir(), "anvil-loopback-features-"));
+    dirs.push(dir);
+    writeBundle(dir, generateBundle(air));
+    const report = await runLoopback(dir);
+    expect(LoopbackReport.parse(report)).toEqual(report);
+    expect(byId(report, "surface")[0]?.status).toBe("pass");
+    // B — every operation's synthesized arguments pass the tool's own zod shape
+    // and reach the wire: the uuid/date-time/email/pattern/enum/bounded fields of
+    // createThing, the whole-body union narrowed to AdminReply, the nested
+    // `body` union narrowed to PageBodyWrite, and the form-urlencoded body the
+    // mock now decodes as fields rather than failing to parse as JSON.
+    const fidelity = byId(report, "fidelity");
+    expect(fidelity.map((c) => c.operationId).sort()).toEqual([
+      "features.forms.create",
+      "features.pages.create",
+      "features.reply.create",
+      "features.things.create",
+      "features.things.list",
+    ]);
+    expect(fidelity.filter((c) => c.status !== "pass")).toEqual([]);
+    expect(byId(report, "confirmation-gate").every((c) => c.status === "pass")).toBe(true);
+    expect(report.summary.fail).toBe(0);
+  }, 120_000);
+
+  it("reports an un-narrowed union as needing a manifest one_of, not as a raw zod error", async () => {
+    const air = await compile({
+      spec,
+      manifest: [
+        "operations:",
+        "  createPage:",
+        "    idempotency: { strategy: none }",
+        "    confirmation: { required: true, risk: medium, reason: Creates a page. }",
+        "    retries: { enabled: false }",
+        "    state: approved",
+      ].join("\n"),
+      serviceId: "features",
+    });
+    const dir = mkdtempSync(join(tmpdir(), "anvil-loopback-features-raw-"));
+    dirs.push(dir);
+    writeBundle(dir, generateBundle(air));
+    const report = await runLoopback(dir);
+    const fidelity = byId(report, "fidelity", "features.pages.create")[0];
+    expect(fidelity?.status).toBe("fail");
+    expect(fidelity?.detail).toContain("0 wire request(s) captured");
+    expect(fidelity?.detail).toContain(
+      "synthesized arguments cannot satisfy the operation's own input schema",
+    );
+    expect(fidelity?.detail).toContain(
+      "body.body: oneOf alternatives [0: object{representation, value}, 1: object]",
+    );
+    expect(fidelity?.detail).toContain("params: { body: { one_of: <component name or index> } }");
+    const gate = byId(report, "confirmation-gate", "features.pages.create")[0];
+    expect(gate?.status).toBe("fail");
+    expect(gate?.detail).toContain("one_of");
+  }, 120_000);
+});

@@ -1,15 +1,6 @@
-import {
-  type AirDocument,
-  agentPropKey,
-  isModeledIdempotencyCarrierInput,
-  type JsonSchema,
-  type Operation,
-  operationInputSchema,
-  operationSafetyInputKeys,
-  resolveIdempotencyCarrier,
-} from "@anvil/air";
+import type { AirDocument } from "@anvil/air";
 import { operationFileStem } from "./file-stem.js";
-import { stringExample } from "./mock-string.js";
+import { exampleFromSchema } from "./mock-example.js";
 
 /**
  * Mock generation with provenance (spec: "Mock generation"). Mocks are not
@@ -57,254 +48,6 @@ export function generateScenarios(air: AirDocument): MockScenario[] {
     }
   }
   return scenarios;
-}
-
-/**
- * Example input payload for an operation, for the skill's examples/ dir and the
- * loopback self-test. Keys are the *input surface* keys (`propKey`, matching the
- * generated CLI/MCP input schema), not the raw wire names — camelCase spec names
- * surface as snake_case inputs, and an example an agent cannot paste back into
- * the tool would be a lie.
- */
-/**
- * A declared example is only usable when the tool surface would accept it. Real
- * specs (Coda) put the *wire serialization* on array params (`example:
- * "fetcher,custom"` for a form-style comma-join) and even type-mismatched
- * values (`example: true` on a string enum) — which the generated zod shape
- * rightly rejects. Repair the recoverable shape (split the comma-join back
- * into items) and drop anything else that would not validate, so the caller
- * falls back to schema synthesis instead of teaching the lie.
- */
-function surfaceExample(example: unknown, schema: JsonSchema | undefined): unknown {
-  if (example === undefined || schema === undefined) return example;
-  if (schema.type === "array" && !Array.isArray(example)) {
-    if (typeof example === "string") return example.split(",").map((item) => item.trim());
-    return [example];
-  }
-  if (Array.isArray(schema.enum) && !schema.enum.includes(example)) return undefined;
-  const primitive: Record<string, string> = {
-    string: "string",
-    integer: "number",
-    number: "number",
-    boolean: "boolean",
-  };
-  const expected = typeof schema.type === "string" ? primitive[schema.type] : undefined;
-  if (expected && typeof example !== expected) return undefined;
-  return example;
-}
-
-export function exampleInput(op: Operation): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const carrier = resolveIdempotencyCarrier(op);
-  const binding = carrier.ok ? carrier.binding : undefined;
-  const safetyKeys = operationSafetyInputKeys(op);
-  // A null synthesis result carries no valid value: the tool's zod shape (and
-  // the executor) treat optional as ABSENT, never null, so an unsynthesizable
-  // optional input must be omitted rather than sent as null.
-  const set = (key: string, value: unknown, required: boolean) => {
-    if (value === null && !required) return;
-    out[key] = value;
-  };
-  for (const p of op.input.params) {
-    if (isModeledIdempotencyCarrierInput(binding, p.in, p.name)) continue;
-    set(
-      agentPropKey(p),
-      surfaceExample(p.example, p.schema) ?? exampleFromSchema(p.schema),
-      p.required,
-    );
-  }
-  const body = op.input.body;
-  if (body?.projection === "fields") {
-    for (const f of body.fields) {
-      if (isModeledIdempotencyCarrierInput(binding, "body", f.name)) continue;
-      set(agentPropKey(f), exampleFromSchema(f.schema), f.required);
-    }
-  } else if (body) {
-    // A required body must synthesize at least {} — a null example would fail
-    // the executor's required-input check before a single wire request is made.
-    // Use the projected surface schema, which omits a modeled runtime-owned
-    // body carrier while AIR's source schema retains it for wire validation.
-    const surfaceProperties = operationInputSchema(op).properties as
-      | Record<string, JsonSchema>
-      | undefined;
-    const surfaceSchema = surfaceProperties?.body;
-    const example = exampleFromSchema(surfaceSchema ?? body.schema);
-    if (example !== null) out.body = example;
-    else if (body.required) out.body = {};
-  }
-  if (op.idempotency.mode === "required") {
-    out[safetyKeys.idempotencyKey] = `${op.canonicalName}-example-key`;
-  }
-  if (op.confirmation.required) out[safetyKeys.confirm] = true;
-  return out;
-}
-
-/** Cap on nested object/array depth for a synthesized example (defense in depth —
- * memoization below already makes a shared subschema O(1) on repeat visits, but a
- * long *unshared* chain should still terminate quickly rather than build a huge
- * example nobody reads). */
-const MAX_EXAMPLE_DEPTH = 8;
-
-/**
- * Best-effort example value from a JSON schema. Memoized by schema object
- * identity: a heavily cross-referential real spec (Stripe's ~860 schemas, each
- * commonly reachable from dozens of operations) reaches the same nested schema
- * object from many call sites, and without this cache each occurrence
- * recomputed its whole example subtree from scratch — bundle generation for
- * such a spec effectively hung. `parse.ts`'s `decycleDocument` already gives
- * repeated references to the same subschema a stable, shared object identity,
- * which is exactly what this cache keys off.
- */
-export function exampleFromSchema(
-  schema: JsonSchema | undefined,
-  cache: Map<JsonSchema, unknown> = new Map(),
-  depth = 0,
-): unknown {
-  if (!schema) return null;
-  if (Object.hasOwn(schema, "const")) return schema.const;
-  const cached = cache.get(schema);
-  if (cached !== undefined) return cached;
-  // A literal `example: null` (HubSpot stamps one on nearly every schema) is an
-  // annotation, not a synthesizable value — null never validates against the
-  // tool's zod shape or the mock's contract, so fall through to the structure.
-  if (schema.example !== undefined && schema.example !== null) return schema.example;
-  if (Array.isArray(schema.examples)) {
-    const first = schema.examples.find((e) => e !== null && e !== undefined);
-    if (first !== undefined) return first;
-  }
-  if (Array.isArray(schema.enum)) {
-    const value = schema.enum.find((v) => v !== null);
-    if (value !== undefined) return value;
-  }
-  if (depth >= MAX_EXAMPLE_DEPTH) return schema.type === "array" ? [] : {};
-  // Materialized `allOf`: synthesize every member and deep-merge the object
-  // results (later members win on key conflict). Real lowered specs compose a
-  // depth-truncation stub with the object carrying the actual fields — the stub
-  // contributes nothing, the fields must survive.
-  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-    const parts = schema.allOf.map((m) => exampleFromSchema(m as JsonSchema, cache, depth + 1));
-    const objects = parts.filter(isRecord);
-    if (objects.length > 0) {
-      const merged = objects.reduce((acc, part) => deepMergeExamples(acc, part));
-      cache.set(schema, merged);
-      return merged;
-    }
-    return parts.find((p) => p !== null && p !== undefined) ?? {};
-  }
-  // `oneOf`/`anyOf`: any branch satisfies the contract — take the first. A
-  // schema may carry its own structure AND alternatives (a base object whose
-  // anyOf members only add `required` constraints — Intercom's create-contact);
-  // there the branch *refines* the base rather than replacing it.
-  const alternatives = (
-    Array.isArray(schema.oneOf) ? schema.oneOf : Array.isArray(schema.anyOf) ? schema.anyOf : []
-  ) as JsonSchema[];
-  if (alternatives.length > 0) {
-    const branch = exampleFromSchema(alternatives[0], cache, depth + 1);
-    if (schema.type === undefined && !isRecord(schema.properties)) return branch;
-    const own = ownExample(schema, cache, depth);
-    if (Array.isArray(schema.oneOf) && isRecord(own) && isRecord(branch)) {
-      // oneOf branches with only `required` constrain a shared properties map.
-      // Emitting every sibling discriminator makes multiple branches match.
-      const chosen = alternatives[0] as JsonSchema;
-      const keys = new Set([
-        ...((schema.required as string[]) ?? []),
-        ...((chosen.required as string[]) ?? []),
-        ...Object.keys((chosen.properties as object) ?? {}),
-        ...Object.keys(branch),
-      ]);
-      const selected = Object.fromEntries(Object.entries(own).filter(([key]) => keys.has(key)));
-      const merged = deepMergeExamples(selected, branch);
-      cache.set(schema, merged);
-      return merged;
-    }
-    if (isRecord(own) && isRecord(branch)) {
-      const merged = deepMergeExamples(own, branch);
-      cache.set(schema, merged);
-      return merged;
-    }
-    return own !== null && own !== undefined ? own : branch;
-  }
-  return ownExample(schema, cache, depth);
-}
-
-/** Synthesize from the schema's own declared structure (no compositors). */
-function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: number): unknown {
-  switch (schema.type) {
-    case "string":
-      return stringExample(schema);
-    case "integer":
-      return typeof schema.minimum === "number" ? schema.minimum : 1;
-    case "number":
-      return 1.0;
-    case "boolean":
-      return true;
-    case "array":
-      return [exampleFromSchema(schema.items as JsonSchema | undefined, cache, depth + 1)];
-    case "object":
-      return objectExample(schema, cache, depth);
-    default: {
-      // No declared type. A schema that still carries `properties` (or a
-      // `required` list — an object constraint in all but name) is an object;
-      // a bare annotation stub (a depth-truncation marker holding only
-      // `description` etc.) synthesizes as {} so a composed/required body
-      // never falls to null on its account.
-      if (isRecord(schema.properties) || Array.isArray(schema.required)) {
-        return objectExample(schema, cache, depth);
-      }
-      if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
-      return null;
-    }
-  }
-}
-
-function objectExample(
-  schema: JsonSchema,
-  cache: Map<JsonSchema, unknown>,
-  depth: number,
-): Record<string, unknown> {
-  const props = (schema.properties as Record<string, JsonSchema>) ?? {};
-  const obj: Record<string, unknown> = {};
-  cache.set(schema, obj); // set before recursing so a cycle in unshared data still terminates
-  for (const [k, v] of Object.entries(props)) obj[k] = exampleFromSchema(v, cache, depth + 1);
-  // A record/map schema (`additionalProperties`-typed, no fixed properties)
-  // gets one representative entry so the synthesized value exercises the map
-  // shape instead of the degenerate {}.
-  const extra = schema.additionalProperties;
-  if (Object.keys(obj).length === 0 && isRecord(extra)) {
-    obj.key = exampleFromSchema(extra as JsonSchema, cache, depth + 1);
-  }
-  return obj;
-}
-
-/** Schema keys that annotate without constraining — a schema of only these is a stub. */
-const ANNOTATION_KEYS = new Set([
-  "description",
-  "title",
-  "deprecated",
-  "readOnly",
-  "writeOnly",
-  "nullable",
-  "default",
-  "$comment",
-  "externalDocs",
-  "xml",
-]);
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** Merge two synthesized object examples; `b` wins on leaf conflicts (allOf order). */
-function deepMergeExamples(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...a };
-  for (const [k, v] of Object.entries(b)) {
-    const prev = out[k];
-    out[k] = isRecord(prev) && isRecord(v) ? deepMergeExamples(prev, v) : v;
-  }
-  return out;
 }
 
 /**
@@ -525,17 +268,57 @@ function bodyTypeMatches(schemaType, body) {
   }
 }
 
+/** The media type of a content-type value: lower-cased, parameters dropped. */
+function mediaTypeOf(value) {
+  return String(value ?? "").split(";")[0].trim().toLowerCase();
+}
+
+/**
+ * Decode the body the way its content type says, so the contract is checked
+ * against what the bytes mean: a form body is a map of fields (a repeated key
+ * is an array, as the capture records query strings), not a failed JSON parse;
+ * a multipart body is recorded raw and checked for presence only, since its
+ * parts are not parsed here. Anything else — JSON, +json, or an undeclared
+ * type — is JSON. The header on the wire wins; the contract's declared type is
+ * the fallback for a client that sent none.
+ */
+function decodeBody(rawBody, contentType, route) {
+  if (rawBody.length === 0) return { body: undefined, kind: "none" };
+  const media = mediaTypeOf(contentType) || mediaTypeOf(route?.body?.contentType);
+  if (media === "application/x-www-form-urlencoded") {
+    return { body: queryCapture(new URLSearchParams(rawBody)), kind: "form" };
+  }
+  if (media === "multipart/form-data") return { body: rawBody, kind: "multipart" };
+  try {
+    return { body: JSON.parse(rawBody), kind: "json" };
+  } catch {
+    return { body: undefined, kind: "json", error: "request body is not valid JSON" };
+  }
+}
+
 /** Validate a matched request against the operation's input contract. */
-function validate(route, query, body, bodyError) {
+function validate(route, query, decoded) {
   const missing = [];
   const invalid = [];
   for (const q of route.requiredQuery) {
     if (!query.has(q)) missing.push(\`query.\${q}\`);
   }
+  const body = decoded.body;
   if (route.body) {
-    if (bodyError) invalid.push(\`body: \${bodyError}\`);
+    if (decoded.error) invalid.push(\`body: \${decoded.error}\`);
     else if (body === undefined) {
       if (route.body.required) missing.push("body");
+    } else if (decoded.kind === "multipart") {
+      // Parts are not parsed: presence is all this mock can attest to.
+    } else if (decoded.kind === "form") {
+      // A form is always a map of fields; the contract must describe one.
+      if (route.body.schemaType !== undefined && route.body.schemaType !== "object") {
+        invalid.push(\`body: a form-urlencoded body is a map of fields, but the contract expects a \${route.body.schemaType}\`);
+      } else {
+        for (const f of route.body.requiredFields) {
+          if (body[f] === undefined) missing.push(\`body.\${f}\`);
+        }
+      }
     } else if (!bodyTypeMatches(route.body.schemaType, body)) {
       invalid.push(\`body: expected a JSON \${route.body.schemaType ?? "value"}\`);
     } else if (typeof body === "object" && body !== null && !Array.isArray(body)) {
@@ -672,18 +455,11 @@ createServer((req, res) => {
       .sort((a, b) => specificity(b.path) - specificity(a.path) || (a.path < b.path ? -1 : 1));
     const route = candidates[0];
 
-    let body;
-    let bodyError;
-    if (rawBody.length > 0) {
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        bodyError = "request body is not valid JSON";
-      }
-    }
+    const decoded = decodeBody(rawBody, req.headers["content-type"], route);
+    const body = decoded.body;
     const query = url.searchParams;
     const validation = route
-      ? validate(route, query, body, bodyError)
+      ? validate(route, query, decoded)
       : { ok: false, missing: [], invalid: [] };
 
     const record = {

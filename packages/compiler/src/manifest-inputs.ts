@@ -175,6 +175,14 @@ function inputSlots(op: Operation, name: string) {
   const prop = isObject(props) ? props[name] : undefined;
   if (isObject(props) && isObject(prop))
     slots.push({ schema: prop, set: (s) => (props[name] = s) });
+  // The whole request body, when nothing else carries the name `body`: a body
+  // typed as a union at its root (Intercom's reply is oneOf[contact reply,
+  // admin reply]) has no field to name, and `body` is the key the input surface
+  // gives it (`operationInputSchema`). A real field called `body` wins, as it
+  // does on the surface, where the body's own properties are what `body` holds.
+  if (slots.length === 0 && name === "body" && body.projection === "whole") {
+    slots.push({ schema: body.schema, set: (s) => (body.schema = s) });
+  }
   return slots;
 }
 

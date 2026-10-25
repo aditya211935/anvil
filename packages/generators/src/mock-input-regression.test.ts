@@ -1,7 +1,7 @@
 import { materializeSchemaBranches } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { exampleFromSchema } from "./mock.js";
+import { exampleFromSchema } from "./mock-example.js";
 import { patternExample } from "./mock-pattern.js";
 
 describe("real corpus input witnesses", () => {

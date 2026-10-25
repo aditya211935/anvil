@@ -33,7 +33,7 @@
 import { stampAlternatives } from "./schema-alternatives.js";
 import { flattenInheritance, withoutDiscriminatorMapping } from "./schema-inherit.js";
 import { collapseExpandable, compactLeafSchema } from "./schema-leaf.js";
-import { SCHEMA_MAP_KEYS, truncateToStub } from "./schema-stub.js";
+import { dropEmptiedKeywords, SCHEMA_MAP_KEYS, truncateToStub } from "./schema-stub.js";
 
 export interface BundleResult<T> {
   document: T;
@@ -725,7 +725,7 @@ function walk(
         childInSchemaMap,
       );
     }
-    out = obj;
+    out = inSchema && !inSchemaMap ? dropEmptiedKeywords(effective, obj) : obj;
   }
   resolved.set(node, { depth, value: out });
   return out;
@@ -914,9 +914,9 @@ function resolveRefs(
       !inSchemaMap && SCHEMA_MAP_KEYS.has(k),
     );
   }
-  if (budget.nameAlternatives && !inSchemaMap) stampAlternatives(node, obj);
-  if (budget.inheritAllOf && !inSchemaMap && Array.isArray(obj.allOf)) {
-    return flattenInheritance(obj) ?? obj;
-  }
+  if (inSchemaMap) return obj;
+  dropEmptiedKeywords(node, obj);
+  if (budget.nameAlternatives) stampAlternatives(node, obj);
+  if (budget.inheritAllOf && Array.isArray(obj.allOf)) return flattenInheritance(obj) ?? obj;
   return obj;
 }

@@ -8,6 +8,34 @@ const matchCandidates = new Script(`
 `);
 const witnessCache = new Map<string, string | undefined>();
 
+/**
+ * Wall-clock bound for one regex evaluation. It caps the work a spec-controlled
+ * pattern can cost (catastrophic backtracking fails closed as "no witness"),
+ * while leaving room for a contended machine: the test suite boots mock and
+ * MCP servers beside these checks, and a 50ms budget was starved into refusing
+ * a trivial `^[A-Z]*$`.
+ */
+const PATTERN_BUDGET_MS = 200;
+
+/**
+ * Whether `value` matches a spec-controlled regex, decided inside the same
+ * interruptible call the witness search uses — so a declared example is checked
+ * against its own pattern without ever running that pattern unbounded.
+ * `undefined` means the pattern could not be evaluated (invalid, or too costly).
+ */
+export function patternMatches(pattern: string, value: string): boolean | undefined {
+  if (pattern.length > 1000 || value.length > 2048) return undefined;
+  try {
+    const found = matchCandidates.runInNewContext(
+      { pattern, candidates: [value] },
+      { timeout: PATTERN_BUDGET_MS },
+    ) as string | undefined;
+    return found === value;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Bounded deterministic witnesses for common OpenAPI regexes. */
 export function patternExample(
   pattern: string,
@@ -116,7 +144,10 @@ export function patternExample(
     if (witnessCache.has(key)) return witnessCache.get(key);
     let witness: string | undefined;
     try {
-      witness = matchCandidates.runInNewContext({ pattern, candidates: bounded }, { timeout: 50 });
+      witness = matchCandidates.runInNewContext(
+        { pattern, candidates: bounded },
+        { timeout: PATTERN_BUDGET_MS },
+      );
     } catch {
       // Invalid or prohibitively expensive patterns have no generated witness.
     }

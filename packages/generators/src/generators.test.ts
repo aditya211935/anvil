@@ -21,7 +21,7 @@ import {
 } from "./deploy.js";
 import { operationInputSignature } from "./input-signature.js";
 import { buildMcpServer, generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
-import { exampleFromSchema, exampleInput } from "./mock.js";
+import { exampleFromSchema, exampleInput } from "./mock-example.js";
 import { buildToolResources } from "./resources.js";
 
 const read = (rel: string) =>
