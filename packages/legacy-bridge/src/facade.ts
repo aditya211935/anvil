@@ -13,6 +13,25 @@ import { assertWireBindingMatchesLegacyBinding } from "./wire-binding.js";
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024;
 
+/**
+ * The operation-addressed invoke route, `/invoke/<operation.name>`.
+ *
+ * `POST /invoke` is the facade's original contract and still works: one
+ * process serves one binding, so the bare route is unambiguous to that
+ * process. A *bundle* lowered from several bindings (`lower.ts`) is not: an
+ * OpenAPI document cannot hold two operations at the same path and method,
+ * and a facade serving binding A must refuse a request the bundle meant for
+ * binding B rather than publish B's body to A's queue. Addressing the route
+ * by the reviewed operation name gives every lowered operation its own
+ * coordinate and lets the facade say "not mine" (404) instead of misrouting.
+ * The lowering and the facade both call this one function, so the path the
+ * bundle declares is the path the facade serves — by construction, not by
+ * agreement.
+ */
+export function legacyBridgeInvokePath(operationName: string): string {
+  return `/invoke/${operationName}`;
+}
+
 export interface LegacyBridgeTelemetryRecord {
   operation: string;
   target: string;
@@ -117,6 +136,7 @@ export function createLegacyBridgeFacade(options: LegacyBridgeFacadeOptions): Re
   assertWireBindingMatchesLegacyBinding(options.wireBinding, options.binding);
   const { binding, wireBinding, client, onTelemetry } = options;
   const loopbackOnly = options.loopbackOnly === true;
+  const invokePath = legacyBridgeInvokePath(binding.operation.name);
 
   return (req, res) => {
     // Whatever `handle` fails to catch (a throwing `onTelemetry`, say) is
@@ -150,14 +170,17 @@ export function createLegacyBridgeFacade(options: LegacyBridgeFacadeOptions): Re
       sendJson(res, 200, { ready: true, operation: binding.operation.name });
       return;
     }
-    if (url.pathname !== "/invoke") {
+    // `/invoke/<another operation>` is a request a lowered bundle addressed to
+    // a different binding than the one this process serves: refused by name,
+    // never forwarded to this binding's queue.
+    if (url.pathname !== "/invoke" && url.pathname !== invokePath) {
       sendJson(res, 404, { code: "not_found", message: `No route for '${url.pathname}'.` });
       return;
     }
     if (req.method !== "POST") {
       sendJson(res, 405, {
         code: "unsupported_operation",
-        message: "Only POST /invoke is served.",
+        message: `Only POST /invoke and POST ${invokePath} are served.`,
       });
       return;
     }

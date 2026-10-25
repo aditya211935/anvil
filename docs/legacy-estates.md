@@ -218,7 +218,15 @@ shape — a message binding whose reply mode is `reply_to` or
 `fixed_destination` — conformance execution and hosting are implemented too:
 `anvil legacy bridge conformance` drives `@anvil/legacy-bridge`'s HTTP
 facade against a deterministic broker double, and `anvil legacy bridge
-serve` hosts that facade over one STOMP 1.2 connection. Driver code
+serve` hosts that facade over one STOMP 1.2 connection. `anvil legacy bridge
+lower` projects reviewed bindings of every transport family into an OpenAPI
+document and manifest that `anvil compile` turns into a bundle, so a reviewed
+legacy operation gets the same CLI + MCP + skill triad as every other Anvil
+operation — but lowering never enables execution: a binding that has not
+passed conformance, or whose shape the queue bridge cannot execute, is held
+`blocked`, a `conformance_passed` one still needs `anvil approve` after
+inspection, and the runtime executes it only behind a declared protocol
+facade pointing at a served, `conformance_passed` binding. Driver code
 generation, packaging, deployment, and live readiness are not implemented
 for any transport, and every other transport family has neither conformance
 execution nor a serve path.
