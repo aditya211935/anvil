@@ -300,6 +300,12 @@ export interface LegacyCollectorContextV2 {
   readonly collectionContext: LegacyCollectionContext;
   readonly requiredCapabilities: readonly LegacyCollectionRequirementType[];
   readonly runtimeBoundary: LegacyCollectorRuntimeBoundaryV2;
+  /**
+   * The deployment digest of the member set being collected, when the host
+   * runs the collector inside an inventory (see `registry.ts`). A fact's
+   * coordinate must carry this exact value; the host never rewrites it.
+   */
+  readonly deploymentDigest?: LegacySha256;
 }
 
 /**

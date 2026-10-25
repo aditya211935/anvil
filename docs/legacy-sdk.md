@@ -401,10 +401,39 @@ Problems are structured, non-retryable compiler outcomes rather than generic
 exceptions.
 
 The boundary is a contract, not a JavaScript sandbox. The host must isolate
-untrusted collector code. The current built-in collectors are not dynamically
-loaded through this SPI, and Anvil does not yet provide a collector registry or
-plugin loader. Custom orchestration must invoke a V2 collector and normalize
-its emissions into inventory explicitly.
+untrusted collector code.
+
+Run a V2 collector inside an inventory through the registry:
+
+```ts
+import { createLegacyCollectorRegistry } from "@anvil/compiler/legacy";
+
+const registry = createLegacyCollectorRegistry();
+registry.register(mySchedulerCollector); // a LegacyCollectorV2 object
+
+const result = await registry.collect({
+  estate: { id: "ops" },
+  environment: "prod",
+  application: "nightly",
+  source: { kind: "deployed_configuration", systemId: "sched-export" },
+  members,
+});
+```
+
+`collect` runs the built-in lanes first, then each registered collector over
+the same members: a member reaches a collector only when the descriptor
+accepts its role, source kind and extension and `detect` claims it. Each fact
+becomes an observation under the inventory's own deployment coordinate (the
+host passes `deploymentDigest` in the collector context, and a fact that names
+any other coordinate is dropped with a `legacy/registry/coordinate_mismatch`
+diagnostic), each problem becomes a diagnostic, and the merged snapshot is
+re-finalized and reconciled so `verifyLegacyProductInput` accepts it. The
+registry refuses a duplicate id, a built-in lane's id, a descriptor without the
+pure offline boundary, and more facts than the descriptor's `maxOutputFacts`.
+
+It is a registry, not a plugin loader: you construct the collector object in
+your own process. The CLI's `--collector` lane list stays closed to the
+built-in collectors, so no command loads code from the tree it inspects.
 
 ## 9. Refine one exact candidate
 
@@ -513,6 +542,7 @@ the exact boundary.
 | `createLegacyCollectionPlan` | Content-addressed evidence contract | Required sources, context, coverage, and fail-closed policy |
 | `collectLegacyInventory` | Snapshot, candidates, collector summary | Technical facts from a bounded in-memory member set |
 | `collectLegacyInventoryStream` | Same result from an async stream | Bounded acquisition intake with backpressure and copied bytes |
+| `createLegacyCollectorRegistry` | Registry whose `collect` adds V2 collector facts to an inventory | Registered facts share the built-in lanes' coordinate, snapshot, and reconciler |
 | `verifyLegacyInventory` | Verified snapshot | Schema, record references, and content identity |
 | `projectLegacyEvidenceGraph` | Typed evidence graph | Exact graph projection without invented evidence |
 | `assessLegacyCoverage` | Coverage report | Collection outcome and per-requirement evidence status |

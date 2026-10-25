@@ -46,6 +46,8 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
 - [Branchyard harnesses](branchyard.md): serve connectors to Branchyard
   branches through the fleet gateway, with per-turn grants, a credential
   vault, and an audit log.
+- [Legacy modernization playbook](legacy-modernization-playbook.md): the
+  order of operations from exports and source to a reviewed, lowered bundle.
 - [Legacy SDK](legacy-sdk.md): programmatic legacy inventory and review.
 - [Legacy refinement](legacy-refinement.md): evidence-backed capability proposals.
 

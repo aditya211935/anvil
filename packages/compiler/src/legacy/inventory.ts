@@ -64,7 +64,8 @@ export type CollectLegacyInventoryStreamInput = Omit<CollectLegacyInventoryInput
 };
 
 export interface LegacyCollectorRun {
-  collector: Exclude<LegacyCollectorKind, "auto">;
+  /** A built-in lane, or the id of a registered V2 collector (see `registry.ts`). */
+  collector: string;
   inputMembers: number;
   observations: number;
   diagnostics: number;
@@ -94,11 +95,7 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
   const systemId = LegacyIdentifier.parse(input.source.systemId);
   const collector = LegacyCollectorKind.parse(input.collector ?? "auto");
   const members = normalizeMembers(input.members);
-  const deploymentDigest = sha256(
-    hashCanonical(
-      members.map((member) => ({ path: member.path, digest: sha256Bytes(member.bytes) })),
-    ),
-  );
+  const deploymentDigest = legacyDeploymentDigest(members);
   const artifacts = members.map((member) => {
     const memberSource = member.source
       ? {
@@ -280,6 +277,24 @@ export async function collectLegacyInventoryStream(
   }
   const { limits: _limits, members: _stream, ...compileInput } = input;
   return collectLegacyInventory({ ...compileInput, members });
+}
+
+/**
+ * The deployment digest every observation in one inventory shares: a hash of
+ * the exact member paths and bytes that were inspected, independent of the
+ * order a caller supplied them in. Exported so a collector run outside the
+ * built-in lanes (see `registry.ts`) can address the same coordinate.
+ */
+export function legacyDeploymentDigest(
+  members: readonly { path: string; bytes: Uint8Array }[],
+): `sha256:${string}` {
+  return sha256(
+    hashCanonical(
+      [...members]
+        .sort((left, right) => left.path.localeCompare(right.path))
+        .map((member) => ({ path: member.path, digest: sha256Bytes(member.bytes) })),
+    ),
+  );
 }
 
 function normalizeMembers(input: readonly LegacySourceMember[]): LegacySourceMember[] {

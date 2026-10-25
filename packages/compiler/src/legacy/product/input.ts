@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   LegacyCapabilityCandidate,
   type LegacyCapabilityCandidate as LegacyCapabilityCandidateType,
+  LegacyIdentifier,
   type LegacyInventorySnapshot,
   reconcileLegacyInventory,
   verifyLegacyInventory,
@@ -23,7 +24,7 @@ export interface VerifiedLegacyProductInput {
 
 const CollectorRun = z
   .object({
-    collector: z.enum(["java-ee", "dotnet", "messaging"]),
+    collector: LegacyIdentifier,
     inputMembers: z.number().int().nonnegative(),
     observations: z.number().int().nonnegative(),
     diagnostics: z.number().int().nonnegative(),
