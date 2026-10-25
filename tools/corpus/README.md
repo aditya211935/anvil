@@ -229,7 +229,7 @@ than being lumped into `ok` or `crash`.)
 | oracle | what it checks | why |
 |---|---|---|
 | `compile-completes` | `anvil compile` exits 0 and writes `air.json`; wall-clock recorded (compile timed separately from fetch) | the floor: a spec that compiled yesterday must compile today |
-| `time-budget` | quick: compile ≤ **2×** baseline ms; sweep: hard cap **90 s** (enforced by killing the child) | catches accidental quadratic behavior — finding #19-style bugs regress as time first |
+| `time-budget` | quick: compile ≤ max(**2×** baseline ms, baseline **+ 1 s**); sweep: hard cap **90 s** (enforced by killing the child) | catches accidental quadratic behavior — finding #19-style bugs regress as time first. The compile is timed as a whole child process, so a small spec's record is mostly Node start-up; the one-second floor keeps that fixed cost's jitter from flapping the gate while a quadratic blow-up (seconds to minutes) still trips it |
 | `size-budget` | quick: `air.json` ≤ **1.5×** baseline bytes; sweep: blow-up heuristic above | schema materialization bugs show up as multi-megabyte AIR long before anything else fails |
 | `round-trip` | `airFromYaml(airToYaml(doc))` parses and its `contractHash` equals the original's | AIR is the canonical model; if YAML round-trip changes the contract, every downstream artifact silently disagrees |
 | `determinism` | compiling the same **locked source** twice yields byte-identical `air.json` | reproducible builds are the basis for contract hashing and diffing. No volatile-field normalization is currently needed — verified byte-stable across all 18 systems at baseline time. If a volatile field is ever introduced, normalize it in `determinism()` and document it here. |
@@ -256,9 +256,11 @@ git diff tools/corpus/baseline.json   # review — every delta should be explain
 Commit the new baseline together with the change that explains it, never on
 its own.
 
-Note on timing baselines: `compileMs` was recorded on one machine and CI runs
-on another; the 2× tolerance absorbs that. If CI hardware is persistently
-slower and time-budget flaps, refresh the baseline from a CI run.
+Note on timing baselines: `compileMs` is recorded from a CI run of the quick
+lane (the `corpus-quick-*` artifact's `report.jsonl`), so the record and the
+measurement share hardware; the 2× tolerance and the one-second floor absorb
+run-to-run jitter. If CI hardware changes and time-budget flaps, refresh
+`compileMs` from a fresh CI run's report rather than from a local machine.
 
 ## Naming-conformance ratchet (`naming-conformance.mjs`)
 

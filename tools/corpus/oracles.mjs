@@ -15,6 +15,17 @@ export const ANVIL = join(ROOT, "packages", "cli", "dist", "bin-anvil.js");
 
 /** Quick-mode tolerance: fail when compile takes > 2x the baseline. */
 export const TIME_TOLERANCE = 2.0;
+/**
+ * Quick-mode absolute allowance on top of the ratio. A compile is timed as a
+ * whole `anvil compile` child process, so a small spec's measurement is mostly
+ * Node start-up and dist loading (~1s on a CI runner), and a 2x ratio over a
+ * ~500ms record leaves no room for that fixed cost to jitter: TripPin failed
+ * at 1074ms against a 1068ms limit, etcd at 1163ms against 1162ms, with every
+ * other oracle green. The gate exists to catch quadratic behaviour, which shows
+ * up as seconds to minutes, so a one-second floor keeps it meaningful without
+ * letting it flap on process start-up.
+ */
+export const TIME_SLACK_MS = 1000;
 /** Quick-mode tolerance: fail when air.json grows > 1.5x the baseline. */
 export const SIZE_TOLERANCE = 1.5;
 /** Sweep-mode hard cap per compile (ms). */
@@ -82,12 +93,12 @@ export function compileCompletes(compileResult, bundleDir) {
   };
 }
 
-/** Oracle (quick): compile wall-clock within TIME_TOLERANCE of the baseline. */
+/** Oracle (quick): compile wall-clock within TIME_TOLERANCE of the baseline, plus TIME_SLACK_MS. */
 export function timeBudget(compileMs, baselineMs) {
   if (baselineMs == null) {
     return { name: "time-budget", ok: true, detail: `no baseline; recorded ${compileMs}ms` };
   }
-  const limit = Math.ceil(baselineMs * TIME_TOLERANCE);
+  const limit = Math.ceil(Math.max(baselineMs * TIME_TOLERANCE, baselineMs + TIME_SLACK_MS));
   const ok = compileMs <= limit;
   return {
     name: "time-budget",

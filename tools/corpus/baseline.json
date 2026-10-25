@@ -1,174 +1,174 @@
 {
-  "updatedAt": "2026-10-25T00:00:00.000Z",
-  "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
+  "updatedAt": "2026-10-25T08:38:13.403Z",
+  "note": "Per-system quick-mode metrics. compileMs is recorded from a CI run of the quick lane (its corpus-quick-* artifact), so the record and the measurement share hardware. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
-      "compileMs": 917,
+      "compileMs": 1466,
       "airBytes": 482676,
       "opCount": 26
     },
     "confluence": {
-      "compileMs": 871,
+      "compileMs": 1353,
       "airBytes": 375259,
       "opCount": 18
     },
     "github": {
-      "compileMs": 1219,
+      "compileMs": 1716,
       "airBytes": 795972,
       "opCount": 25
     },
     "stripe": {
-      "compileMs": 2195,
+      "compileMs": 2788,
       "airBytes": 2781275,
       "opCount": 22
     },
     "twilio": {
-      "compileMs": 846,
+      "compileMs": 1329,
       "airBytes": 391066,
       "opCount": 15
     },
     "slack": {
-      "compileMs": 756,
+      "compileMs": 1185,
       "airBytes": 321855,
       "opCount": 14
     },
     "gmail": {
-      "compileMs": 682,
+      "compileMs": 1172,
       "airBytes": 135368,
       "opCount": 11
     },
     "notion": {
-      "compileMs": 631,
+      "compileMs": 1141,
       "airBytes": 200135,
       "opCount": 24
     },
     "pagerduty": {
-      "compileMs": 688,
+      "compileMs": 1168,
       "airBytes": 422113,
       "opCount": 12
     },
     "zoom": {
-      "compileMs": 668,
+      "compileMs": 1139,
       "airBytes": 122580,
       "opCount": 14
     },
     "hubspot": {
-      "compileMs": 745,
+      "compileMs": 1224,
       "airBytes": 163112,
       "opCount": 12
     },
     "docusign": {
-      "compileMs": 1907,
+      "compileMs": 2228,
       "airBytes": 1843400,
       "opCount": 15
     },
     "github_gql": {
-      "compileMs": 2170,
+      "compileMs": 3969,
       "airBytes": 9217960,
       "opCount": 309
     },
     "temporal": {
-      "compileMs": 732,
+      "compileMs": 1281,
       "airBytes": 828419,
       "opCount": 121
     },
     "asana": {
-      "compileMs": 690,
+      "compileMs": 1172,
       "airBytes": 452313,
       "opCount": 12
     },
     "zendesk": {
-      "compileMs": 652,
+      "compileMs": 1101,
       "airBytes": 163940,
       "opCount": 9
     },
     "intercom": {
-      "compileMs": 675,
+      "compileMs": 1153,
       "airBytes": 276388,
       "opCount": 9
     },
     "linear": {
-      "compileMs": 3529,
+      "compileMs": 5077,
       "airBytes": 13897718,
       "opCount": 653
     },
     "amadeus": {
-      "compileMs": 722,
+      "compileMs": 1187,
       "airBytes": 118664,
       "opCount": 2
     },
     "netsuite": {
-      "compileMs": 587,
+      "compileMs": 1117,
       "airBytes": 211585,
       "opCount": 42
     },
     "odata_trippin": {
-      "compileMs": 534,
+      "compileMs": 1074,
       "airBytes": 118602,
       "opCount": 25
     },
     "odata_northwind": {
-      "compileMs": 712,
+      "compileMs": 1374,
       "airBytes": 925797,
       "opCount": 130
     },
     "etcd": {
-      "compileMs": 581,
+      "compileMs": 1163,
       "airBytes": 279698,
       "opCount": 42
     },
     "okta": {
-      "compileMs": 5265,
+      "compileMs": 4845,
       "airBytes": 8186846,
       "opCount": 731
     },
     "docusign_clm": {
-      "compileMs": 692,
+      "compileMs": 1303,
       "airBytes": 271588,
       "opCount": 10
     },
     "bigquery": {
-      "compileMs": 1176,
+      "compileMs": 1531,
       "airBytes": 1704388,
       "opCount": 47
     },
     "datadog": {
-      "compileMs": 9556,
+      "compileMs": 10859,
       "airBytes": 14658180,
       "opCount": 1687
     },
     "xero": {
-      "compileMs": 1053,
+      "compileMs": 1954,
       "airBytes": 1983196,
       "opCount": 235
     },
     "box": {
-      "compileMs": 2481,
+      "compileMs": 3755,
       "airBytes": 4109446,
       "opCount": 297
     },
     "adyen": {
-      "compileMs": 1805,
+      "compileMs": 2660,
       "airBytes": 1847148,
       "opCount": 28
     },
     "oracle_ords": {
-      "compileMs": 519,
+      "compileMs": 1018,
       "airBytes": 72241,
       "opCount": 12
     },
     "adobe_aem": {
-      "compileMs": 602,
+      "compileMs": 1148,
       "airBytes": 307154,
       "opCount": 48
     },
     "shopware": {
-      "compileMs": 7872,
+      "compileMs": 6344,
       "airBytes": 16969024,
       "opCount": 1122
     },
     "plaid": {
-      "compileMs": 3607,
+      "compileMs": 5148,
       "airBytes": 6614559,
       "opCount": 350
     }
