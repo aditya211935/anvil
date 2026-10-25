@@ -138,7 +138,10 @@ describe("legacy collector registry", () => {
         descriptor: {
           ...descriptor,
           id: "other",
-          runtimeBoundary: { ...PURE_OFFLINE_COLLECTOR_BOUNDARY_V2, networkAccess: true },
+          runtimeBoundary: {
+            ...PURE_OFFLINE_COLLECTOR_BOUNDARY_V2,
+            networkAccess: true,
+          } as unknown as typeof PURE_OFFLINE_COLLECTOR_BOUNDARY_V2,
         },
       }),
     ).toThrow(LegacyCollectorRegistryError);

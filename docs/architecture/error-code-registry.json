@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 453,
-  "asserted": 324,
-  "unasserted": 129,
+  "total": 462,
+  "asserted": 329,
+  "unasserted": 133,
   "codes": {
     "air/incompatible_version": {
       "packages": [
@@ -1452,7 +1452,7 @@
       "packages": [
         "cli"
       ],
-      "asserted": false
+      "asserted": true
     },
     "legacy/bridge_input_refused": {
       "packages": [
@@ -1472,11 +1472,17 @@
       ],
       "asserted": false
     },
-    "legacy/bridge_output_exists": {
+    "legacy/bridge_lower_no_bindings": {
       "packages": [
         "cli"
       ],
       "asserted": false
+    },
+    "legacy/bridge_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
     },
     "legacy/bridge_plan_failed": {
       "packages": [
@@ -1586,6 +1592,48 @@
       ],
       "asserted": false
     },
+    "legacy/merge_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/merge_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/merge_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/merge_input_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/merge_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/merge_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/merge_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "legacy/output_exists": {
       "packages": [
         "cli"
@@ -1677,6 +1725,12 @@
       "asserted": true
     },
     "legacy/refinement_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scaffold_failed": {
       "packages": [
         "cli"
       ],
