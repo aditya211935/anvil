@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 443,
-  "asserted": 321,
-  "unasserted": 122,
+  "total": 450,
+  "asserted": 327,
+  "unasserted": 123,
   "codes": {
     "air/incompatible_version": {
       "packages": [
@@ -542,6 +542,48 @@
     "console/unsupported_media_type": {
       "packages": [
         "console"
+      ],
+      "asserted": true
+    },
+    "database/multiple_signatures": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/no_procedure_ddl": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/oversized_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/package_body_without_specification": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/result_set_unproven": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "database/tsql_function_unsupported": {
+      "packages": [
+        "compiler"
       ],
       "asserted": true
     },

@@ -1,6 +1,6 @@
 ---
 name: anvil-legacy-estates
-description: Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, and messaging estates before proposing any runtime bridge or business-shaped MCP tool.
+description: Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, messaging, and stored-procedure DDL estates before proposing any runtime bridge or business-shaped MCP tool.
 ---
 
 # Inventory a legacy estate before building a bridge
@@ -17,7 +17,7 @@ anvil legacy inventory <offline-export> \
 ```
 
 The default `auto` lane runs only applicable offline collectors. Select
-`--collector java-ee`, `dotnet`, or `messaging` when a collection is
+`--collector java-ee`, `dotnet`, `messaging`, or `database` when a collection is
 intentionally limited to one vocabulary. Use `--source-kind` and `--source-id`
 to preserve where the evidence came from; use `--check` when CI must stop on
 unresolved conflicts.

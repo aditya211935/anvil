@@ -26,6 +26,13 @@ See [the fixture walkthrough](legacy-refunds/README.md). It stops before harness
 submission and runtime execution because neither business meaning nor a live
 WebLogic bridge can be inferred from deployment descriptors.
 
+`legacy-ledger-plsql/` is the database counterpart: one PL/SQL package
+specification and body plus one T-SQL procedure, read as inert DDL text by
+`anvil legacy inventory --collector database`. See
+[its walkthrough](legacy-ledger-plsql/README.md) for the spec-over-body rule,
+the literal transaction and error facts it retains, and the result-set and
+idempotency facts it refuses to invent.
+
 For **real** enterprise specifications (NetSuite SOAP, live OData v2/v4, gRPC)
 compiled through the same pipeline, see the backtest corpus
 ([`../docs/backtesting/ENTERPRISE_SYSTEMS.md`](../docs/backtesting/ENTERPRISE_SYSTEMS.md)).

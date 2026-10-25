@@ -23,7 +23,7 @@ export interface VerifiedLegacyProductInput {
 
 const CollectorRun = z
   .object({
-    collector: z.enum(["java-ee", "dotnet", "messaging"]),
+    collector: z.enum(["java-ee", "dotnet", "messaging", "database"]),
     inputMembers: z.number().int().nonnegative(),
     observations: z.number().int().nonnegative(),
     diagnostics: z.number().int().nonnegative(),

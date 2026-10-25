@@ -1,6 +1,6 @@
 # Legacy application estates
 
-Anvil can turn offline Java EE, .NET Framework, and messaging configuration into
+Anvil can turn offline Java EE, .NET Framework, messaging, and stored-procedure DDL evidence into
 an evidence-backed inventory of possible invocation boundaries. It can then
 help a coding harness describe one candidate as a business operation and bind a
 human review to that exact proposal.
@@ -147,6 +147,41 @@ base addresses, binding settings, and protocol mappings remain ambiguous.
 
 The collector never creates a producer or consumer and never samples a queue to
 guess a schema.
+
+### Databases (stored procedures)
+
+- PL/SQL `CREATE [OR REPLACE] PACKAGE` specifications and bodies, standalone
+  `CREATE [OR REPLACE] PROCEDURE` and `FUNCTION` DDL, including `IN`, `OUT`,
+  and `IN OUT` modes, `DEFAULT` markers, `RETURN` types, and `SYS_REFCURSOR`
+  OUT parameters;
+- T-SQL `CREATE [OR ALTER] PROCEDURE` headers with `@parameter` types,
+  `= default` markers, and `OUTPUT` parameters;
+- literal transaction facts in a body: `PRAGMA AUTONOMOUS_TRANSACTION`,
+  `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK`; and
+- literal error facts: `RAISE_APPLICATION_ERROR(-20xxx, ...)` codes, `THROW`
+  codes, and `RAISERROR` message ids.
+
+Exports are read as inert text with `--`, `/* */`, and string literals stripped
+first, so commented-out DDL and dynamic SQL inside a literal are never read as
+declarations. The scanner never evaluates SQL, resolves a type, or connects to a
+database. When a package specification and body are both present, signatures
+come from the specification and the body contributes only evidence and literal
+body facts; a body-only subprogram is private and is not a candidate. Overloaded
+or divergent signatures for one procedure are retained as a conflict, not
+chosen. A member that carries credentials (`IDENTIFIED BY`, `WITH PASSWORD`,
+`SECRET =`, inline connection-string passwords) is refused with
+`legacy/database/secret_like_value`.
+
+The collector explicitly does not infer:
+
+- idempotency: a procedure that commits is a mutation until a human proves
+  otherwise;
+- result-set shapes: a T-SQL procedure that selects rows gets no `output_schema`
+  claim and `legacy/database/result_set_unproven` instead, because DDL does not
+  declare the columns a body returns;
+- T-SQL function contracts: a `CREATE FUNCTION` unit is recorded as evidence
+  with `legacy/database/tsql_function_unsupported` and projects no candidate; or
+- business meaning: `post_entry` is a technical name, not a business operation.
 
 ### Content detection and explicit unknowns
 
