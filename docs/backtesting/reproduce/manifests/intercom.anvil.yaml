@@ -27,6 +27,12 @@ operations:
     idempotency: { strategy: none }
     confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
     retries: { enabled: false }
+    params:
+      # The spec types the contact id as `format: uuid` with min/maxLength 24 —
+      # no string satisfies both, so every call would be refused before the wire.
+      # Intercom's own examples (`536e564f316c83104c000020`) are 24 hex digits:
+      # carry the id as exactly that.
+      "from.id": { type: string, pattern: "^[0-9a-f]{24}$" }
     state: approved
   retrieveConversation: { state: approved }
   replyConversation:

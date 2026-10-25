@@ -749,10 +749,12 @@ function deepMergeExamples(
 export function describeExampleProblem(problem: ExampleProblem): string {
   const segments = problem.path.split(".");
   const top = segments[0] ?? problem.path;
-  // `body.<field>` is the body's top-level field; `body` alone is the whole body;
-  // anything else at the top is a parameter. Deeper paths are out of a manifest's reach.
-  const reachable = segments.length <= 2 && (top === "body" || segments.length === 1);
-  const wireName = segments.length === 2 && top === "body" ? segments[1] : top;
+  // `body.<field>` is the body's top-level field and `body.<field>.<prop>…` a
+  // property below it, which a dotted `params` name reaches; `body` alone is
+  // the whole body; anything else at the top is a parameter, whose scalar
+  // schema has nothing below it a manifest could name.
+  const reachable = top === "body" || segments.length === 1;
+  const wireName = top === "body" && segments.length >= 2 ? segments.slice(1).join(".") : top;
   if (problem.kind === "indiscriminable_union") {
     const remedy = reachable
       ? `narrow it with a manifest params entry (params: { ${wireName}: { one_of: <component name or index> } })`

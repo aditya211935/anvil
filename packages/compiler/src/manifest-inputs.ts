@@ -153,7 +153,7 @@ export function applyParamsPatch(op: Operation, params: ManifestParams): void {
 
 const unmatched = (name: string) =>
   `params manifest patch for '${name}' left unset: the operation has no parameter ` +
-  "or top-level body field of that name.";
+  "or top-level body field of that name (a dotted name reaches a property below one).";
 
 type Retype = z.infer<typeof ManifestRetype>;
 
@@ -182,6 +182,28 @@ function inputSlots(op: Operation, name: string) {
   // does on the surface, where the body's own properties are what `body` holds.
   if (slots.length === 0 && name === "body" && body.projection === "whole") {
     slots.push({ schema: body.schema, set: (s) => (body.schema = s) });
+  }
+  // A dotted name reaches a property below a top-level input (`from.id`):
+  // Intercom types a contact id as `format: uuid` with `maxLength: 24`, which no
+  // string satisfies, and the field sits inside the body's `from` object. The
+  // head names the input as above; each further segment is a property of an
+  // object schema, so the retype lands on exactly one leaf per slot.
+  if (slots.length === 0 && name.includes(".")) {
+    const [head, ...rest] = name.split(".") as [string, ...string[]];
+    for (const root of inputSlots(op, head)) {
+      let parent: Record<string, unknown> | undefined = root.schema;
+      for (const segment of rest.slice(0, -1)) {
+        const props: unknown = parent?.properties;
+        const next = isObject(props) ? props[segment] : undefined;
+        parent = isObject(next) ? next : undefined;
+      }
+      const leaf = rest[rest.length - 1] as string;
+      const props: unknown = parent?.properties;
+      const leafSchema = isObject(props) ? props[leaf] : undefined;
+      if (isObject(props) && isObject(leafSchema)) {
+        slots.push({ schema: leafSchema, set: (s) => (props[leaf] = s) });
+      }
+    }
   }
   return slots;
 }

@@ -318,14 +318,21 @@ describe("exampleFromSchema picks exactly one oneOf alternative", () => {
     expect(line).toContain("params: { body: { one_of: <component name or index> } }");
   });
 
-  it("says when a problem lies out of a manifest params entry's reach", () => {
+  it("names the dotted params entry for a property below a body field, and says when nothing reaches", () => {
     const nested = describeExampleProblem({
       path: "body.from.id",
       kind: "unsatisfiable",
       detail: "no string satisfies format uuid, maxLength 24",
     });
     expect(nested).toContain("body.from.id: no string satisfies format uuid, maxLength 24");
-    expect(nested).toContain("out of a manifest params entry's reach");
+    expect(nested).toContain("params: { from.id: { type: ... } }");
+    // A parameter is a scalar: nothing below it has a name a manifest could use.
+    const belowParam = describeExampleProblem({
+      path: "limit.sub",
+      kind: "unsatisfiable",
+      detail: "x",
+    });
+    expect(belowParam).toContain("out of a manifest params entry's reach");
     const whole = describeExampleProblem({
       path: "body",
       kind: "indiscriminable_union",
