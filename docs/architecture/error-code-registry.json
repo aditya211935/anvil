@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 443,
-  "asserted": 321,
-  "unasserted": 122,
+  "total": 453,
+  "asserted": 324,
+  "unasserted": 129,
   "codes": {
     "air/incompatible_version": {
       "packages": [
@@ -1677,6 +1677,66 @@
       "asserted": true
     },
     "legacy/refinement_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_binding_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_binding_unverifiable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/scorecard_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_input_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/scorecard_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/scorecard_invalid_option": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/scorecard_output_exists": {
       "packages": [
         "cli"
       ],

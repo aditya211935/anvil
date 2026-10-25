@@ -118,6 +118,8 @@ anvil legacy gaps legacy.inventory.json \\
 anvil legacy explain legacy.inventory.json <lc_candidate_id> --out explanation.json
 anvil legacy diff previous.inventory.json legacy.inventory.json --out inventory.diff.json
 anvil legacy merge prod.inventory.json uat.inventory.json --out estate.inventory.json
+anvil legacy scorecard legacy.inventory.json --bindings reviewed-bindings/ \\
+  --format md --out legacy.scorecard.md
 \`\`\`
 
 \`graph\` projects typed evidence links. \`gaps\` measures semantic completeness
@@ -128,6 +130,12 @@ applications, source plus deployed configuration) into one verified inventory
 report that every other command accepts; it keeps every value, and marks each
 logical capability whose deployments disagree with a
 \`legacy/merge/cross_source_disagreement\` warning (\`--check\` fails on it).
+
+Likewise, \`scorecard\` counts candidates, conflicts, unknown claim
+dimensions, reviewed bindings, and the bindings whose transport shape the queue
+bridge can conformance-test (\`executable_shape\`) versus those still needing an
+adapter family; it exits 0 whenever its inputs verify and never proposes an
+approval or calls a capability ready.
 
 The safe progression is:
 

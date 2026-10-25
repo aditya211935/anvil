@@ -101,6 +101,7 @@ const PAGES = [
     dest: "guides/legacy-modernization-playbook.md",
     order: 10,
   },
+  { src: "docs/legacy-scorecard.md", dest: "guides/legacy-scorecard.md", order: 10 },
   { src: "docs/SOURCE_FORMATS.md", dest: "guides/source-formats.md", order: 11 },
   { src: "docs/CI.md", dest: "guides/ci.md", order: 12 },
   { src: "docs/TROUBLESHOOTING.md", dest: "guides/troubleshooting.md", order: 13 },

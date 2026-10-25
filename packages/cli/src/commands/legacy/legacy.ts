@@ -17,6 +17,7 @@ import { registerLegacyMerge } from "./merge.js";
 import { registerLegacyProduct } from "./product.js";
 import { registerLegacyRefinement } from "./refine.js";
 import { registerLegacyScaffold } from "./scaffold.js";
+import { registerLegacyScorecard } from "./scorecard.js";
 import { readLegacySourceSet } from "./source-files.js";
 
 const REPORT_TYPE = "anvil.legacy-estate-inventory";
@@ -107,6 +108,7 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
   registerLegacyProduct(legacy, ctx);
   registerLegacyMerge(legacy, ctx);
   registerLegacyScaffold(legacy, ctx);
+  registerLegacyScorecard(legacy, ctx);
 }
 
 function runLegacyInventory(source: string, options: LegacyInventoryOptions, io: CliIO): number {
