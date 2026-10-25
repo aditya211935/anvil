@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { contractHash, hashCanonical, loadAirDocument } from "./index.js";
 
@@ -23,7 +24,63 @@ const doc = {
   ],
 };
 
+/** The historical implementation: one canonical string, hashed whole. */
+function legacyHashCanonical(value: unknown): string {
+  const canonicalize = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canonicalize);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = Object.create(null);
+      for (const key of Object.keys(v as Record<string, unknown>).sort()) {
+        out[key] = canonicalize((v as Record<string, unknown>)[key]);
+      }
+      return out;
+    }
+    return v;
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(value)) as string)
+    .digest("hex");
+}
+
 describe("hashCanonical", () => {
+  it("digests exactly the bytes the single-string form did, so stored hashes stand", () => {
+    const samples: unknown[] = [
+      doc,
+      { z: 1, a: [3, { y: null, x: 'é "\\\n' }], m: undefined, f: () => 1 },
+      [undefined, () => 1, Symbol("s"), Number.NaN, Number.POSITIVE_INFINITY, -0, 1e21, ""],
+      { date: new Date(0), map: new Map([["k", 1]]), set: new Set([1]), boxed: new Number(2) },
+      { nested: { deep: { deeper: { deepest: [[[]], {}] } } } },
+      { withToJson: { toJSON: () => ({ b: 1, a: 2 }) }, arr: [{ toJSON: () => undefined }] },
+      { omitted: { toJSON: () => undefined }, kept: 1 },
+      JSON.parse('{"__proto__":{"authorized":true}}'),
+      // Array-index keys: JavaScript enumerates them first and numerically,
+      // whatever order they were assigned in, so `2` came before `10` and
+      // both before `a` in every stored hash. Status codes are such keys.
+      { "10": "b", "2": "a", b: 1, a: 2, "007": "not an index", "4294967295": "too big" },
+      { responses: { "404": {}, "200": {}, default: {}, "2xx": {} } },
+      "a string",
+      42,
+      true,
+      null,
+      [],
+      {},
+    ];
+    for (const sample of samples) {
+      expect(hashCanonical(sample)).toBe(legacyHashCanonical(sample));
+    }
+  });
+
+  it("streams: a value whose canonical text is far larger than one chunk still hashes as one", () => {
+    const big = Array.from({ length: 50_000 }, (_, i) => ({ i, text: "x".repeat(40) }));
+    expect(hashCanonical(big)).toBe(legacyHashCanonical(big));
+  });
+
+  it("refuses a value with no JSON form instead of crashing inside the digest", () => {
+    expect(() => hashCanonical(undefined)).toThrow(TypeError);
+    expect(() => hashCanonical({ toJSON: () => undefined })).toThrow(TypeError);
+    expect(() => hashCanonical({ n: 1n })).toThrow(TypeError);
+  });
+
   it("includes JSON prototype-named properties in contract and approval identities", () => {
     const input = JSON.parse('{"__proto__":{"authorized":true}}');
     expect(hashCanonical(input)).not.toBe(hashCanonical({}));

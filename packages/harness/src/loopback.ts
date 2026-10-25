@@ -9,6 +9,7 @@ import {
   diff,
   ensureBundleNodeModules,
   expectedWire,
+  explainInputRefusal,
   fullyDisclosedSource,
   hermeticCredentialEnv,
   MockControl,
@@ -17,6 +18,7 @@ import {
   startMockServer,
   trim,
   wireable,
+  wireRefusal,
   withoutConfirmationInput,
   withTimeout,
 } from "./bundle-driver.js";
@@ -170,13 +172,27 @@ export async function runLoopback(
           detail: probe.detail,
         });
       } else {
-        checks.push(await checkFidelity(call, ctl, op, scenarios));
+        // An operation the runtime cannot put on the wire even through the
+        // mock facade (a streaming RPC, a declined gRPC HTTP rule) is skipped
+        // with the reason, not failed: the compiler has already said so, and
+        // the surface check above still proves the tool is served correctly.
+        const refusal = wireRefusal(op);
+        checks.push(
+          refusal === undefined
+            ? await checkFidelity(call, ctl, op, scenarios)
+            : { id: "fidelity", operationId: op.id, status: "skipped", detail: refusal },
+        );
       }
     }
     for (const op of approved.filter(
       (o) => o.confirmation.required && o.auth.type !== "oauth2_on_behalf_of",
     )) {
-      checks.push(await checkConfirmationGate(call, ctl, op));
+      const refusal = wireRefusal(op);
+      checks.push(
+        refusal === undefined
+          ? await checkConfirmationGate(call, ctl, op)
+          : { id: "confirmation-gate", operationId: op.id, status: "skipped", detail: refusal },
+      );
     }
     checks.push(await checkErrorMapping(call, ctl, approved, scenarios));
     checks.push(await checkRetryOnRead(call, ctl, approved));
@@ -316,10 +332,18 @@ async function checkFidelity(
     const result = await call(op.mcp.toolName, args);
     const requests = await ctl.capture();
     if (result.isError) {
+      // Two refusals have a cause this harness can name: the tool's own input
+      // validation refusing the synthesized arguments (zero wire requests), and
+      // the mock refusing the one request that was made (its contract check).
+      const rejected = requests.length === 1 ? requests[0] : undefined;
+      const mock =
+        rejected && !rejected.validation.ok
+          ? `; the mock rejected the wire request: missing [${rejected.validation.missing.join(", ")}] invalid [${rejected.validation.invalid.join(", ")}]`
+          : "";
       return failCheck(
         id,
         op.id,
-        `tool call errored with ${requests.length} wire request(s) captured: ${trim(result.text)}`,
+        `tool call errored with ${requests.length} wire request(s) captured: ${explainInputRefusal(op, result.text)}${mock}`,
       );
     }
     if (requests.length !== 1) {
@@ -437,7 +461,11 @@ async function checkConfirmationGate(
     const confirmed = await call(op.mcp.toolName, argsFor(op, "confirm-accepted"));
     const after = await ctl.capture();
     if (confirmed.isError) {
-      return failCheck(id, op.id, `confirmed call still errored: ${trim(confirmed.text)}`);
+      return failCheck(
+        id,
+        op.id,
+        `confirmed call still errored: ${explainInputRefusal(op, confirmed.text)}`,
+      );
     }
     if (after.length !== 1) {
       return failCheck(
@@ -541,7 +569,7 @@ async function checkRetryOnRead(
       status: "skipped",
       detail:
         reads.length > 0
-          ? "reads exist but none is wire-executable (see their fidelity failures)"
+          ? "reads exist but none is wire-executable (see their fidelity checks)"
           : "no approved read operations",
     };
   }

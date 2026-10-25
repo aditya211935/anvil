@@ -374,3 +374,58 @@ describe("tri-surface conformance (enterprise vendors)", () => {
     expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
   }, 300_000);
 });
+
+describe("tri-surface conformance (ledger, Stripe-shaped form encodings)", () => {
+  it("puts deepObject form fields and query parameters on the wire identically from CLI and MCP", async () => {
+    const dir = await buildBundle(
+      "fixtures/ledger-form.yaml",
+      "fixtures/ledger-form.anvil.yaml",
+      "ledger",
+    );
+    const report = await runConformance(dir, {
+      cliPackageDir: CLI_PACKAGE_DIR,
+      callTimeoutMs: VENDOR_CALL_TIMEOUT_MS,
+    });
+    expect(ConformanceReport.parse(report)).toEqual(report);
+    expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
+    // Both operations carry an encoding the runtime refused until the spec's
+    // `encoding`/`style` declarations were read: a form body with deepObject
+    // object and array fields, and deepObject query parameters. The CLI (a
+    // `--body` JSON argument) and the MCP tool (an args object) must produce
+    // byte-equal bracketed wire requests, and both must match the oracle.
+    const wire = byId(report, "wire-agreement");
+    expect(wire.map((c) => c.operationId).sort()).toEqual([
+      "ledger.capture.create",
+      "ledger.charges.list",
+    ]);
+    const notPassing = wire.filter((c) => c.status !== "pass");
+    expect(notPassing, JSON.stringify(notPassing, null, 2)).toEqual([]);
+    expect(report.summary.fail, JSON.stringify(report.checks, null, 2)).toBe(0);
+  }, 180_000);
+});
+
+describe("tri-surface conformance (kv, gRPC with a streaming RPC)", () => {
+  it("skips the stream's wire agreement with the runtime's reason instead of failing it", async () => {
+    const dir = await buildBundle(
+      "fixtures/kv-stream.proto",
+      "fixtures/kv-stream.anvil.yaml",
+      "kv",
+    );
+    const air = JSON.parse(readFileSync(join(dir, "air.json"), "utf8")) as {
+      operations: Array<{ id: string; sourceRef: { operationId?: string } }>;
+    };
+    const idOf = (name: string) =>
+      air.operations.find((o) => o.sourceRef.operationId === name)?.id ?? name;
+    const report = await runConformance(dir, {
+      cliPackageDir: CLI_PACKAGE_DIR,
+      callTimeoutMs: VENDOR_CALL_TIMEOUT_MS,
+    });
+    expect(ConformanceReport.parse(report)).toEqual(report);
+    expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
+    expect(byId(report, "wire-agreement", idOf("Range"))[0]?.status).toBe("pass");
+    const watch = byId(report, "wire-agreement", idOf("Watch"))[0];
+    expect(watch?.status).toBe("skipped");
+    expect(watch?.detail).toMatch(/not wire-executable: speaks grpc/);
+    expect(report.summary.fail, JSON.stringify(report.checks, null, 2)).toBe(0);
+  }, 180_000);
+});

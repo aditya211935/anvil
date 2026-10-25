@@ -1,0 +1,16 @@
+# Manifest for ledger-form.yaml: approve both operations, and declare the
+# Stripe-style Idempotency-Key header the spec itself cannot express.
+service:
+  name: ledger
+  display_name: Ledger API
+  owner: harness-fixtures
+
+auth:
+  type: basic
+  scopes: []
+
+operations:
+  GetCharges: { state: approved }
+  PostChargesChargeCapture:
+    idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }
+    state: approved

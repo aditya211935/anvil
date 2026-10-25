@@ -1,8 +1,10 @@
 import {
   agentPropKey,
+  type BodyFieldEncoding,
   bodyEncodingFor,
   type JsonSchema,
   type Param,
+  ParamStyle,
   type RequestBody,
   snakeCase,
 } from "@anvil/air";
@@ -27,8 +29,36 @@ function isScalarField(schema: JsonSchema): boolean {
  * per-field flags, while anything richer (nesting, arrays, unions) is surfaced
  * whole so nothing is lost.
  */
+/**
+ * The OpenAPI media type object's `encoding` map, as a source hands it over:
+ * one entry per top-level body property, carrying `style`/`explode` (and a
+ * part `contentType` this compiler does not yet read).
+ */
+export type RawBodyEncoding = Record<string, { style?: unknown; explode?: unknown }>;
+
+/**
+ * Carry the declared per-field encodings into AIR, the way `toParam` carries a
+ * parameter's: only what the source declared, only a style OpenAPI defines,
+ * and nothing at all when nothing was declared — so a document without an
+ * `encoding` map hashes exactly as it did before the field existed.
+ */
+function bodyEncodingOf(raw: RawBodyEncoding | undefined): RequestBody["encoding"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, BodyFieldEncoding> = {};
+  for (const [field, declared] of Object.entries(raw)) {
+    if (!declared || typeof declared !== "object") continue;
+    const style = ParamStyle.safeParse(declared.style).data;
+    const entry: BodyFieldEncoding = {
+      ...(style ? { style } : {}),
+      ...(typeof declared.explode === "boolean" ? { explode: declared.explode } : {}),
+    };
+    if (Object.keys(entry).length > 0) out[field] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function buildRequestBody(
-  content: Record<string, { schema?: JsonSchema }> | undefined,
+  content: Record<string, { schema?: JsonSchema; encoding?: RawBodyEncoding }> | undefined,
   required: boolean,
   namedSchemas: Record<string, unknown>,
   params: readonly Param[],
@@ -47,6 +77,13 @@ export function buildRequestBody(
     "application/json";
   const rawSchema = content[contentType]?.schema;
   if (!rawSchema) return undefined;
+  // The media type's `encoding` says how each field goes on the wire. It is
+  // meaningful for a form (and multipart) body, where the runtime reads it; a
+  // JSON body has no per-field wire encoding, so none is carried for one.
+  const encoding =
+    bodyEncodingFor(contentType) === "json"
+      ? undefined
+      : bodyEncodingOf(content[contentType]?.encoding);
   // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
   // pointers so the whole spec's schema graph is only ever walked once; this
   // is the one place a body needs its own fields directly inspectable
@@ -84,7 +121,15 @@ export function buildRequestBody(
         schema: propSchema,
         description: propSchema.description as string | undefined,
       })),
+      ...(encoding ? { encoding } : {}),
     };
   }
-  return { contentType, required, schema, projection: "whole", fields: [] };
+  return {
+    contentType,
+    required,
+    schema,
+    projection: "whole",
+    fields: [],
+    ...(encoding ? { encoding } : {}),
+  };
 }

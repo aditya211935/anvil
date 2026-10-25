@@ -1,0 +1,10 @@
+# Manifest for kv-stream.proto: a mixed surface, one executable unary read and
+# one streaming RPC the runtime cannot put on the wire.
+service:
+  name: kv
+  display_name: KV gRPC Service
+  owner: harness-fixtures
+
+operations:
+  Range: { state: approved }
+  Watch: { state: approved }

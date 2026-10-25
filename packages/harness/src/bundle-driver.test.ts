@@ -1,7 +1,25 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { operationSafetyInputKeys } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { describe, expect, it } from "vitest";
-import { argsFor, cliFlagsFor, expectedWire, withoutConfirmationInput } from "./bundle-driver.js";
+import {
+  argsFor,
+  cliFlagsFor,
+  expectedWire,
+  explainInputRefusal,
+  formCapture,
+  synthesisProblems,
+  wireable,
+  wireRefusal,
+  withoutConfirmationInput,
+} from "./bundle-driver.js";
+
+const fixture = (name: string) =>
+  readFileSync(
+    fileURLToPath(new URL(`../../../examples/fixtures/${name}`, import.meta.url)),
+    "utf8",
+  );
 
 const COLLISION_SPEC = `openapi: 3.0.0
 info: { title: widgets, version: 1.0.0 }
@@ -131,5 +149,193 @@ describe("expectedWire serializes parameters by the shared style table", () => {
       "filter[size]": "m",
     });
     expect(wire.headers["x-meta"]).toBe("k,v");
+  });
+});
+
+const RENAMED_INPUT_SPEC = JSON.stringify({
+  openapi: "3.0.3",
+  info: { title: "Calls", version: "1" },
+  servers: [{ url: "https://calls.example.test" }],
+  paths: {
+    "/Calls.json": {
+      get: {
+        operationId: "ListCall",
+        parameters: [
+          { name: "EndTime", in: "query", schema: { type: "string" } },
+          { name: "EndTime<", in: "query", schema: { type: "string" } },
+          { name: "EndTime>", in: "query", schema: { type: "string" } },
+        ],
+        responses: { "200": { description: "OK" } },
+      },
+    },
+  },
+});
+
+describe("bundle driver re-projected input names", () => {
+  it("keys the seeded object by the agent key the compiler chose, not the snake-cased wire name", async () => {
+    const air = await compile({ spec: RENAMED_INPUT_SPEC, serviceId: "calls" });
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture: ListCall not compiled");
+    expect(op.input.params.map((p) => [p.name, p.agentName])).toEqual([
+      ["EndTime", undefined],
+      ["EndTime<", "end_time_lt"],
+      ["EndTime>", "end_time_gt"],
+    ]);
+    const args = { end_time: "a", end_time_lt: "b", end_time_gt: "c" };
+    expect(cliFlagsFor(op, args)).toEqual([
+      "--end-time",
+      "a",
+      "--end-time-lt",
+      "b",
+      "--end-time-gt",
+      "c",
+    ]);
+    // The flags round-trip to the exact wire query the MCP surface would send.
+    expect(expectedWire(op, args).query).toMatchObject({
+      EndTime: "a",
+      "EndTime<": "b",
+      "EndTime>": "c",
+    });
+  });
+});
+
+const FEATURES = fileURLToPath(
+  new URL("../../../examples/fixtures/selftest-schema-features", import.meta.url),
+);
+const features = (manifest?: string) =>
+  compile({
+    spec: readFileSync(`${FEATURES}.yaml`, "utf8"),
+    manifest: manifest ?? readFileSync(`${FEATURES}.anvil.yaml`, "utf8"),
+    serviceId: "features",
+  });
+
+describe("expectedWire mirrors a form-urlencoded body as the mock decodes it", () => {
+  it("expects strings, a repeated key as an array and a single value as a plain string", async () => {
+    const air = await features();
+    const op = air.operations.find((o) => o.sourceRef.operationId === "submitForm");
+    if (!op) throw new Error("submitForm not compiled");
+    const wire = expectedWire(op, {
+      body: { name: "ex", amount: 100, tags: ["a", "b"], notify: true, skipped: null },
+      confirm: true,
+    });
+    expect(wire.body).toEqual({ name: "ex", amount: "100", tags: ["a", "b"], notify: "true" });
+    expect(formCapture({ tags: ["only"] })).toEqual({ tags: "only" });
+    // A JSON body keeps its JSON shape.
+    const json = air.operations.find((o) => o.sourceRef.operationId === "createPage");
+    if (!json) throw new Error("createPage not compiled");
+    expect(expectedWire(json, { body: { title: "t", body: { value: "v" } } }).body).toEqual({
+      title: "t",
+      body: { value: "v" },
+    });
+  });
+});
+
+describe("expectedWire shapes a form body as the mock captures it", () => {
+  it("expects a deepObject field as its bracketed wire pairs, by the body's declared encoding", async () => {
+    const air = await compile({
+      spec: fixture("ledger-form.yaml"),
+      manifest: fixture("ledger-form.anvil.yaml"),
+      serviceId: "ledger",
+    });
+    const capture = air.operations.find(
+      (o) => o.sourceRef.operationId === "PostChargesChargeCapture",
+    );
+    if (!capture) throw new Error("PostChargesChargeCapture not compiled");
+    // The compiler carried the media type's `encoding` map into AIR.
+    expect(capture.input.body?.encoding).toEqual({
+      metadata: { style: "deepObject", explode: true },
+      expand: { style: "deepObject", explode: true },
+      transfer_data: { style: "deepObject", explode: true },
+    });
+    const wire = expectedWire(capture, {
+      charge: "ch_1",
+      body: {
+        amount: 1500,
+        metadata: { order_id: "o_1", tier: "gold" },
+        expand: ["customer", "invoice"],
+        transfer_data: { amount: 1200, destination: "acct_1" },
+      },
+      idempotency_key: "k-1",
+    });
+    expect(wire.path).toBe("/v1/charges/ch_1/capture");
+    expect(wire.headers["idempotency-key"]).toBe("k-1");
+    // Exactly the record the generated mock writes for a form body: the wire
+    // pairs under their on-wire names, values as the text they travelled as.
+    expect(wire.body).toEqual({
+      amount: "1500",
+      "metadata[order_id]": "o_1",
+      "metadata[tier]": "gold",
+      "expand[0]": "customer",
+      "expand[1]": "invoice",
+      "transfer_data[amount]": "1200",
+      "transfer_data[destination]": "acct_1",
+    });
+
+    // Query parameters declared deepObject: an array by index, a range object
+    // by key, and the integer branch of the anyOf as the bare scalar.
+    const list = air.operations.find((o) => o.sourceRef.operationId === "GetCharges");
+    if (!list) throw new Error("GetCharges not compiled");
+    expect(
+      expectedWire(list, { created: { gt: 1, lt: 2 }, expand: ["data.customer"], limit: 3 }).query,
+    ).toEqual({ "created[gt]": "1", "created[lt]": "2", "expand[0]": "data.customer", limit: "3" });
+    expect(expectedWire(list, { created: 7 }).query).toEqual({ created: "7" });
+  });
+});
+
+describe("wireRefusal names why the hermetic lanes cannot drive an operation", () => {
+  it("skips a framing refusal with the protocol and reason, and drives a transcodable unary call", async () => {
+    const air = await compile({
+      spec: fixture("kv-stream.proto"),
+      manifest: fixture("kv-stream.anvil.yaml"),
+      serviceId: "kv",
+    });
+    const range = air.operations.find((o) => o.sourceRef.operationId === "Range");
+    const watch = air.operations.find((o) => o.sourceRef.operationId === "Watch");
+    if (!range || !watch) throw new Error("fixture no longer has Range and Watch");
+    // The unary call carries a `json_transcoded` binding: a coordinates
+    // refusal the declared mock facade answers, so the lanes drive it.
+    expect(wireable(range)).toBe(true);
+    expect(wireRefusal(range)).toBeUndefined();
+    // The stream carries no binding: a framing refusal no facade can answer,
+    // so the lanes skip it and say so in the runtime's own words.
+    expect(wireable(watch)).toBe(false);
+    expect(wireRefusal(watch)).toMatch(/^not wire-executable: speaks grpc — /);
+    expect(wireRefusal(watch)).toMatch(/length-prefixed protobuf/);
+  });
+});
+
+describe("explainInputRefusal names the cause of an input-validation refusal", () => {
+  it("explains an indiscriminable union with the one_of remedy, and leaves other errors alone", async () => {
+    // Without the narrowing manifest, createPage's `body` is a oneOf whose
+    // alternatives both accept the synthesized value.
+    const air = await features("operations:\n  createPage: { state: approved }\n");
+    const op = air.operations.find((o) => o.sourceRef.operationId === "createPage");
+    if (!op) throw new Error("createPage not compiled");
+    expect(synthesisProblems(op)).toEqual([
+      expect.objectContaining({ path: "body.body", kind: "indiscriminable_union" }),
+    ]);
+    const refusal =
+      "MCP error -32602: Input validation error: Invalid arguments for tool features_create_page: Invalid input: more than one option matched at body.body";
+    const explained = explainInputRefusal(op, refusal);
+    expect(explained).toMatch(
+      /^synthesized arguments cannot satisfy the operation's own input schema/,
+    );
+    expect(explained).toContain(
+      "body.body: oneOf alternatives [0: object{representation, value}, 1: object]",
+    );
+    expect(explained).toContain("params: { body: { one_of: <component name or index> } }");
+    expect(explained).toContain("(server said: MCP error -32602");
+    // An upstream error is not about synthesis; the text passes through trimmed.
+    const upstream =
+      '{ "error": { "code": "validation_error", "message": "Upstream returned 400." } }';
+    expect(explainInputRefusal(op, upstream)).toBe(upstream);
+    // With the narrowing applied there is nothing to explain, so even a
+    // validation refusal is reported as the server worded it.
+    const narrowed = (await features()).operations.find(
+      (o) => o.sourceRef.operationId === "createPage",
+    );
+    if (!narrowed) throw new Error("createPage not compiled");
+    expect(synthesisProblems(narrowed)).toEqual([]);
+    expect(explainInputRefusal(narrowed, refusal)).toBe(refusal);
   });
 });

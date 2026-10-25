@@ -883,3 +883,46 @@ the project so far — nothing had ever executed the generated MCP path.
   never values); `discover` hedges weak matches instead of confidently
   misdirecting; and the CLI's `--examples` now emits the same `exampleInput`
   as the skill's worked examples — one example surface, not two.
+
+### 38. Synthesized self-test arguments the tool's own schema refused — FIXED
+- **Symptom** (nightly corpus, `anvil selftest`): Intercom's `createConversation`
+  was refused with "Invalid UUID at body.from.id", Intercom's `replyConversation`
+  and all four Confluence writes with "more than one option matched at body[.body]",
+  Stripe's `post_customers`/`post_subscriptions`/`…confirm` with "expected never"
+  and "Invalid input" on `anyOf` fields, and Stripe's `finalize`/`pay`/`void`/
+  `cancel` reached the mock once and got a 400 the report could only call
+  "Upstream returned 400".
+- **Causes, one per surface**: (1) synthesis returned a vendor `example`
+  verbatim even when the schema itself refused it (a 24-character ObjectId on a
+  `format: uuid` field), ignored numeric and array bounds and type lists, sent
+  `null` for optional nested properties zod reads as absent, and took `oneOf[0]`
+  without checking that the value matched that alternative *alone* — zod's
+  `oneOf` is exclusive. (2) The materialization node budget stubbed every array
+  to `[]`, turning Stripe's 100-entry `enum` and its `anyOf` lists into
+  `enum: []`/`anyOf: []`, which admit nothing. (3) The generated mock parsed
+  every body as JSON; Stripe's are form-urlencoded. (4) A body typed as a union
+  at its root (Intercom's reply) could not be narrowed: `params.body.one_of`
+  only reached a *field* called `body`.
+- **Fix**: `exampleInputReport` synthesizes against the contract zod enforces —
+  declared examples are admitted only when the schema admits them; `format`,
+  `pattern`, lengths, `minimum`/`maximum`/`exclusive*`/`multipleOf`,
+  `minItems`/`maxItems`/`uniqueItems`, type lists; optional unsynthesizable
+  properties are omitted; a `oneOf` alternative is chosen by checking each
+  witness against every materialized alternative (patterns stripped so no spec
+  regex runs unbounded). Where no value exists, or no alternative has a witness
+  of its own, it reports an `unsatisfiable`/`indiscriminable_union` problem and
+  the fidelity check prints the cause and the manifest remedy
+  (`params: { <input>: { one_of: … } }`) ahead of the server's wording. A
+  budget-emptied `enum`/`oneOf`/`anyOf`/`type` list is dropped (loosened) with a
+  note, never emitted as a refusal of every value. The mock decodes a body by
+  its content type (form → fields, multipart → presence only) and the fidelity
+  oracle expects the decoded form shape. `params.body.one_of` reaches a
+  root-level union body. The shipped Confluence manifest narrows every write's
+  `body` to the flat `{representation, value}` form; Intercom's reply is narrowed
+  to the admin form.
+- **Result**: Confluence 19 pass / 8 fail → 27 / 0; Intercom 12 / 4 → 14 / 2
+  (the remaining two are the honest finding that Intercom's `from.id` declares
+  `format: uuid` with `maxLength: 24`, which no string satisfies — a spec defect
+  below a top-level input, out of a manifest's reach); Stripe 3 / 34 → 13 / 24,
+  every remaining failure the runtime's form/deepObject encoding refusal (a
+  separate workstream).

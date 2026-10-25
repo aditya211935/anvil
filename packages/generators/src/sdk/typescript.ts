@@ -224,6 +224,7 @@ function operationsModule(plan: SdkPlan): string {
                 key: f.key,
                 required: f.required,
               })),
+              ...(op.body.encoding ? { encoding: op.body.encoding } : {}),
             },
           }
         : {}),

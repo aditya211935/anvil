@@ -180,6 +180,18 @@ function withQueryParameter(document: AirDocument): AirDocument {
       params: [
         ...target.input.params,
         { name: "expand", in: "query", required: false, schema: { type: "string" } },
+        // A declared deepObject array (Stripe's `expand[0]=…`): bracketed by
+        // index in every language. Named to sort between `expand` and `tags`,
+        // because Go's url.Values encodes in key order while the other three
+        // keep declaration order, and the assertion below is on the exact URL.
+        {
+          name: "fields",
+          in: "query",
+          required: false,
+          style: "deepObject",
+          explode: true,
+          schema: { type: "array", items: { type: "string" } },
+        },
         // An array under OpenAPI's default (form, exploded) style: the key is
         // repeated, and an item that is not a scalar is refused, in every
         // language, before the wire.
@@ -236,8 +248,9 @@ const REFUND = {
 };
 
 /** The read every language also makes: a space in the path and in the query,
- *  and an exploded array whose key every language must repeat. */
-const LOOKUP = { customerId: "c 1", expand: "a b", tags: ["x", "y z"] };
+ *  an exploded array whose key every language must repeat, and a deepObject
+ *  array every language must bracket by index. */
+const LOOKUP = { customerId: "c 1", expand: "a b", fields: ["id", "name x"], tags: ["x", "y z"] };
 
 /**
  * The dry-run plan each language printed for the refund, keyed by language.
@@ -299,7 +312,7 @@ try {
 } catch (error) {
   console.log("refused:" + (error instanceof AnvilError ? error.code : "wrong-type"));
 }
-await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)}, tags: ${JSON.stringify(LOOKUP.tags)} });
+await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)}, fields: ${JSON.stringify(LOOKUP.fields)}, tags: ${JSON.stringify(LOOKUP.tags)} });
 const items = [];
 for await (const item of client.listCustomersPaginated({ per_page: 5 })) items.push(item);
 console.log("paged:" + items.join(","));
@@ -363,7 +376,7 @@ try:
     print("NOT REFUSED")
 except AnvilError as error:
     print("refused:" + error.code)
-client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)}, tags=${JSON.stringify(LOOKUP.tags)})
+client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)}, fields=${JSON.stringify(LOOKUP.fields)}, tags=${JSON.stringify(LOOKUP.tags)})
 print("paged:" + ",".join(client.list_customers_paginated(per_page=5)))
 print("sent")
 `,
@@ -452,7 +465,7 @@ func main() {
 	} else {
 		fmt.Println("NOT REFUSED")
 	}
-	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Expand: &expand, Tags: []any{${LOOKUP.tags.map((tag) => JSON.stringify(tag)).join(", ")}}}); err != nil {
+	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Expand: &expand, Fields: []any{${LOOKUP.fields.map((field) => JSON.stringify(field)).join(", ")}}, Tags: []any{${LOOKUP.tags.map((tag) => JSON.stringify(tag)).join(", ")}}}); err != nil {
 		panic(err)
 	}
 	perPage := int64(5)
@@ -558,6 +571,7 @@ public class Drive {
     client.getCustomer(
         new GetCustomerInput(${JSON.stringify(LOOKUP.customerId)})
             .expand(${JSON.stringify(LOOKUP.expand)})
+            .fields(java.util.Arrays.<Object>asList(${LOOKUP.fields.map((field) => JSON.stringify(field)).join(", ")}))
             .tags(java.util.Arrays.<Object>asList(${LOOKUP.tags.map((tag) => JSON.stringify(tag)).join(", ")})));
     java.util.List<String> items = new java.util.ArrayList<String>();
     for (Object page : client.listCustomersPages(new ListCustomersInput().perPage(5L), CallOptions.none(), 10)) {
@@ -650,8 +664,12 @@ describe("the four SDKs agree on the wire", () => {
     // URLEncoder does form encoding for both, which is why this is asserted
     // rather than assumed.
     // And an exploded array repeats its key, in every language, rather than
-    // arriving as one language's idea of an array's toString.
-    expect(first?.url).toBe("/customers/c%201?expand=a+b&tags=x&tags=y+z");
+    // arriving as one language's idea of an array's toString; a declared
+    // deepObject array is bracketed by index, with the same percent-encoding
+    // of the brackets, in every language.
+    expect(first?.url).toBe(
+      "/customers/c%201?expand=a+b&fields%5B0%5D=id&fields%5B1%5D=name+x&tags=x&tags=y+z",
+    );
     expect(first?.authorization).toBe("Bearer tok");
     expect(first?.idempotencyKey).toBeUndefined();
     for (const request of gets) expect(request).toEqual(first);

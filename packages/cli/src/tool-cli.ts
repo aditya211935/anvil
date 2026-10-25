@@ -1056,17 +1056,74 @@ function assertFlagHasValue(flag: string, value: string | boolean, schema: JsonS
   }
 }
 
+/** The text as JSON when it reads as a JSON array or object; undefined otherwise. */
+function structuredText(value: string): unknown {
+  const text = value.trim();
+  if (!text.startsWith("[") && !text.startsWith("{")) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The schema's declared type, or the one non-null type of a nullable union. */
+function declaredType(schema: JsonSchema): string | undefined {
+  const raw = schema.type;
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) return raw.find((t) => t !== "null") as string | undefined;
+  return undefined;
+}
+
+/**
+ * The value a flag's text means, by the input's schema. Scalars coerce as they
+ * always did. A structured input — an array, an object, or an untyped union
+ * such as Stripe's `created: anyOf [range object, integer]` — is supplied as
+ * JSON on the command line (`--expand '["customer"]'`, `--created '{"gt":1}'`),
+ * the same convention as `--body '<json>'`, so the CLI carries exactly the
+ * value the MCP tool receives as an args object and the two surfaces put one
+ * request on the wire. An array of scalars also accepts the comma-separated
+ * shorthand (`--expand customer,invoice`), each item coerced by the items
+ * schema. Text that is none of these stays text, and the input schema says so.
+ */
 function coerce(value: string | boolean, schema: JsonSchema): unknown {
   if (typeof value === "boolean") return value;
-  switch (schema.type) {
+  switch (declaredType(schema)) {
     case "integer":
       return Number.parseInt(value, 10);
     case "number":
       return Number(value);
     case "boolean":
       return value === "true";
-    default:
+    case "string":
       return value;
+    case "array": {
+      const structured = structuredText(value);
+      if (structured !== undefined) return structured;
+      const items = (schema.items ?? {}) as JsonSchema;
+      return value.split(",").map((item) => coerce(item.trim(), items));
+    }
+    case "object":
+      return structuredText(value) ?? value;
+    default: {
+      // Untyped, or a union of alternatives: JSON when it reads as JSON, a
+      // number when a numeric branch is declared and the text is numeric, else
+      // the text — the schema validation names anything that fits no branch.
+      const structured = structuredText(value);
+      if (structured !== undefined) return structured;
+      const alternatives = [
+        ...((schema.anyOf as JsonSchema[] | undefined) ?? []),
+        ...((schema.oneOf as JsonSchema[] | undefined) ?? []),
+      ].map(declaredType);
+      if (alternatives.some((t) => t === "integer" || t === "number")) {
+        const n = Number(value);
+        if (value.trim() !== "" && Number.isFinite(n)) return n;
+      }
+      if (alternatives.includes("boolean") && (value === "true" || value === "false")) {
+        return value === "true";
+      }
+      return value;
+    }
   }
 }
 
@@ -1428,6 +1485,8 @@ function serviceHelp(air: AirDocument): string {
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
     `            (an explicit key is recommended; required only when --policy lists it)`,
     `  --body '<json>'  (for operations whose body is not a flat object)`,
+    `  --<param> '<json>'  (an array or object parameter takes JSON; an array of`,
+    `                      scalars also takes a comma-separated list)`,
     `  --mcp stdio | <http-url> | sse:<url> | direct`,
     `                     (local MCP, remote Streamable HTTP, explicit legacy SSE,`,
     `                      or force direct; overrides ANVIL_MCP_TARGET)`,

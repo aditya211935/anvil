@@ -82,7 +82,8 @@ where the MCP tool produced one) and hid a Google Discovery `{+projectId}`
 template bug (MCP emitted `%7BprojectId%7D`, the CLI emitted `{projectId}`).
 
 Conformance mode drives the real pipeline for one system per adapter format —
-**compile → approve reads → capability approve → build → `anvil conformance
+**compile (with the system's reproduce manifest, when `docs/backtesting/reproduce/manifests/`
+has one) → approve reads → capability approve → build → `anvil conformance
 <bundle>`** — and asserts the tri-surface report PASSED with **at least one
 wire-agreement check** (a pass that drove zero checks is treated as a `vacuous`
 failure, so a silent divergence can't hide behind an empty run). The subset

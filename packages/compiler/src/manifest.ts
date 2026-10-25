@@ -1151,6 +1151,21 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
     }
     op.state = m.state;
+    // Record the decision itself as a claim, so a later pass can tell a state a
+    // reviewer chose from one the compiler fell back to. validate() reads it:
+    // an unguarded query-language passthrough a manifest explicitly holds
+    // `blocked` is an acknowledged decision, not an open one.
+    op.evidence.claims.push({
+      subject: op.id,
+      predicate: "state",
+      value: m.state,
+      source: "spec",
+      sourceRef: "anvil-manifest",
+      method: "manifest",
+      note: "state declared by supplemental Anvil manifest",
+      confidence: 1,
+      review: "accepted",
+    });
   }
 
   // mtls and custom_header are executable once their material is coherent

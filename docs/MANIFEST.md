@@ -108,7 +108,7 @@ Prefer the source operation id when it is stable and unique.
 | `auth` | Define principal, carrier, profile, issuer, audience, and source | Store identifiers and variable names only, never credential values |
 | `retries` | Bound attempts and retryable conditions | Runtime still disables retries when idempotency does not make them safe |
 | `pagination` | Declare how a paginated read is paged (`style`, `cursor_param`, `items_field`, `next_field`, `paging_field`, …) when the spec did not make it inferable; the field names may be nested paths such as `response_metadata.next_cursor` | Carrier parameters are validated against the operation's real inputs; a phantom parameter or a mutation declines with a review note |
-| `params` | Retype an input the source types wrongly, by wire name: `ts: { type: string, pattern: ... }` carries Slack's message timestamp as the string it is instead of a number. Or narrow a union input to one alternative with `one_of` (see below) | Applies to a parameter in any location and a top-level body field; a retype drops the old type's constraints and keeps descriptions. A narrowing may only tighten. A name nothing carries, and a narrowing that cannot apply, decline with a review note |
+| `params` | Retype an input the source types wrongly, by wire name: `ts: { type: string, pattern: ... }` carries Slack's message timestamp as the string it is instead of a number; a dotted name (`"from.id": { type: string, pattern: ... }`) reaches a property below a top-level body field. Or narrow a union input to one alternative with `one_of` (see below) | Applies to a parameter in any location, a top-level body field, and a property below one named with dots; a retype drops the old type's constraints and keeps descriptions. A narrowing may only tighten. A name nothing carries, and a narrowing that cannot apply, decline with a review note |
 | `query_policy` | Constrain a raw query passthrough | A policy moves the operation out of `blocked`, not directly to `approved` |
 | `query_schema` | Add catalog-grounded tables, columns, sensitivity, and examples | Documentation input; runtime does not treat it as enforcement |
 | `stream` | Resize a subscription's observation window (`max_events`, `max_seconds`) | Capped at 10,000 events / 300 seconds by AIR's schema; resizes an existing window, never creates one |
@@ -148,6 +148,17 @@ a property or requirement it does not declare, an input that is not a union,
 or an alternative that does not exist each leave the input as the source typed
 it and add a review note that says why. Where the input appears more than once
 (a parameter and its body projection), every copy is narrowed or none is.
+
+`body` names the whole request body when no parameter or body field is called
+`body` — for a body typed as a union at its root, such as Intercom's reply
+(`oneOf[contact reply, admin reply]`), `body: { one_of: admin_reply_conversation_request }`
+picks the form the integration sends. A real field named `body` (Confluence's
+page body) takes precedence, as it does on the input surface.
+
+`anvil selftest` points at the need for this narrowing: when the synthesized
+arguments cannot satisfy a `oneOf` because every alternative accepts them, the
+fidelity check says so and names the `params` entry to write, rather than
+quoting the server's "more than one option matched".
 
 The narrowed schema is what AIR records, so the MCP tool's input schema, the
 simulator's value validation (`anvil simulate serve --validate-values`), and

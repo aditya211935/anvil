@@ -130,12 +130,24 @@ type BodyFieldSpec struct {
 	Required bool
 }
 
+// FieldEncodingSpec is how one form-body field goes on the wire, when the
+// source declared it (OpenAPI encoding): the query-parameter styles, with
+// ExplodeSet saying whether Explode was declared.
+type FieldEncodingSpec struct {
+	Style      string
+	Explode    bool
+	ExplodeSet bool
+}
+
 // BodySpec describes the request body as AIR preserved it.
 type BodySpec struct {
 	Required    bool
 	ContentType string
 	Projection  string
 	Fields      []BodyFieldSpec
+	// Encoding is the per-field wire encoding the source declared for a form
+	// body, keyed by wire name; nil when none was declared.
+	Encoding map[string]FieldEncodingSpec
 }
 
 // CarrierSpec is the exact on-wire coordinate an idempotency key is placed at.

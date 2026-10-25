@@ -69,6 +69,72 @@ describe("singularize", () => {
   });
 });
 
+describe("resource derivation for a path made only of parameters", () => {
+  it("takes the resource noun from the operationId instead of the service id", async () => {
+    // Oracle REST Data Services addresses any table as `/{schema}/{table}/`: no
+    // concrete segment names a resource. The service id used to stand in,
+    // singularized into `oracle_ord`, and every such operation collided onto one
+    // CLI command (`oracle_ords oracle_ords get`) that disambiguation then
+    // suffixed into `query_table_by_table`.
+    const air = await compile({
+      spec: specOf(`  /{schema}/{table}/:
+    get:
+      operationId: queryTable
+      parameters:
+        - { name: schema, in: path, required: true, schema: { type: string } }
+        - { name: table, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+    post:
+      operationId: insertRow
+      parameters:
+        - { name: schema, in: path, required: true, schema: { type: string } }
+        - { name: table, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content: { application/json: { schema: { type: object } } }
+      responses: { "201": { description: ok } }
+  /{schema}/{table}/{id}:
+    get:
+      operationId: getRow
+      parameters:
+        - { name: schema, in: path, required: true, schema: { type: string } }
+        - { name: table, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+`),
+      serviceId: "oracle_ords",
+    });
+    const byOpId = new Map(air.operations.map((o) => [o.sourceRef.operationId, o]));
+    expect(byOpId.get("queryTable")?.effect.resource).toBe("table");
+    expect(byOpId.get("queryTable")?.cli.command).toBe("oracle_ords table get");
+    expect(byOpId.get("queryTable")?.mcp.toolName).toBe("oracle_ords_query_table");
+    expect(byOpId.get("getRow")?.effect.resource).toBe("row");
+    expect(byOpId.get("getRow")?.cli.command).toBe("oracle_ords row get");
+    expect(byOpId.get("insertRow")?.cli.command).toBe("oracle_ords row create");
+    // No collision remains, so no disambiguation suffix is appended anywhere.
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(false);
+    // An operationId noun is a routable resource, not the `no_resource` weakness.
+    const quality = byOpId
+      .get("queryTable")
+      ?.evidence.claims.find((claim) => claim.predicate === "name.quality");
+    expect(quality?.note).toContain("taken from the operationId");
+    expect(quality?.note).not.toContain("fell back to the service name");
+  });
+
+  it("keeps the service id when the operationId has no noun to offer", async () => {
+    const air = await compile({
+      spec: specOf(`  /{id}:
+    get:
+      operationId: get
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+`),
+      serviceId: "svc",
+    });
+    expect(air.operations[0]?.effect.resource).toBe("svc");
+  });
+});
+
 describe("resource derivation for verb-shaped trailing segments (rules A and C)", () => {
   it("re-homes a bare CRUD-verb terminal segment onto the collection before it", async () => {
     // Plaid's grammar: POST /transactions/get reads transactions; today 252 of

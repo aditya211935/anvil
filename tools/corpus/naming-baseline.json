@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-30T23:15:38.518Z",
+  "updatedAt": "2026-10-25T00:24:14.117Z",
   "note": "Per-system naming-conformance counters (ratchet: growth fails). Regenerate with: node tools/corpus/run.mjs quick --update-naming-baseline",
   "systems": {
     "jira": {
@@ -153,17 +153,17 @@
       "overStrippedResources": 0
     },
     "bigquery": {
-      "operations": 42,
+      "operations": 47,
       "zeroOverlapResource": 0,
       "stutters": {
         "spec_authored": 0,
-        "service_prefix_join": 42,
+        "service_prefix_join": 47,
         "disambiguation_suffix": 0
       },
       "overStrippedResources": 0
     },
     "box": {
-      "operations": 294,
+      "operations": 297,
       "zeroOverlapResource": 0,
       "stutters": {
         "spec_authored": 24,
@@ -184,7 +184,7 @@
     },
     "adobe_aem": {
       "operations": 48,
-      "zeroOverlapResource": 20,
+      "zeroOverlapResource": 13,
       "stutters": {
         "spec_authored": 0,
         "service_prefix_join": 0,
@@ -193,12 +193,12 @@
       "overStrippedResources": 0
     },
     "plaid": {
-      "operations": 351,
+      "operations": 350,
       "zeroOverlapResource": 1,
       "stutters": {
         "spec_authored": 0,
         "service_prefix_join": 0,
-        "disambiguation_suffix": 26
+        "disambiguation_suffix": 25
       },
       "overStrippedResources": 15
     },
@@ -211,6 +211,136 @@
         "disambiguation_suffix": 0
       },
       "overStrippedResources": 2
+    },
+    "stripe": {
+      "operations": 22,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "twilio": {
+      "operations": 15,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "zendesk": {
+      "operations": 9,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "intercom": {
+      "operations": 9,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "docusign": {
+      "operations": 15,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "github_gql": {
+      "operations": 309,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 1,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 2
+    },
+    "linear": {
+      "operations": 653,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 2,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 8
+    },
+    "odata_trippin": {
+      "operations": 25,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "okta": {
+      "operations": 731,
+      "zeroOverlapResource": 32,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 5
+    },
+    "datadog": {
+      "operations": 1687,
+      "zeroOverlapResource": 57,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 1
+      },
+      "overStrippedResources": 29
+    },
+    "xero": {
+      "operations": 235,
+      "zeroOverlapResource": 2,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 2
+    },
+    "oracle_ords": {
+      "operations": 12,
+      "zeroOverlapResource": 5,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "shopware": {
+      "operations": 1122,
+      "zeroOverlapResource": 11,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 4
     }
   }
 }

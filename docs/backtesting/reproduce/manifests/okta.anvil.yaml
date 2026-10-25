@@ -1,0 +1,17 @@
+# Supplemental Anvil manifest for the Okta Management backtest. The published
+# contract is compiled whole; nothing here approves an operation.
+#
+# A federated claim's `expression` body field is an Okta Expression Language
+# program evaluated server-side: an unconstrained query-language carrier. The
+# compiler blocks both writes as query-language passthroughs, and no
+# `query_policy` dialect guards that grammar, so the reviewed decision is to
+# keep them blocked. Declaring it here acknowledges the finding; the operations
+# stay blocked and are never exposed.
+service:
+  name: okta
+  display_name: Okta Management API
+  owner: backtesting
+  environment: prod
+operations:
+  createFederatedClaim: { state: blocked }
+  replaceFederatedClaim: { state: blocked }

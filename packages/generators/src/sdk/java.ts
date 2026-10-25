@@ -197,8 +197,14 @@ function operationsFile(pkg: string, plan: SdkPlan): string {
           `            new OperationSpec.Param(${q(param.wireName)}, ${q(param.key)}, ${q(param.in)}, ${param.required}${param.style || param.explode !== undefined ? `, ${param.style ? q(param.style) : "null"}, ${param.explode === undefined ? "null" : param.explode ? "Boolean.TRUE" : "Boolean.FALSE"}` : ""})`,
       )
       .join(",\n");
+    const encodings = Object.entries(op.body?.encoding ?? {})
+      .map(
+        ([field, encoding]) =>
+          `new OperationSpec.FieldEncoding(${q(field)}, ${encoding.style ? q(encoding.style) : "null"}, ${encoding.explode === undefined ? "null" : encoding.explode ? "Boolean.TRUE" : "Boolean.FALSE"})`,
+      )
+      .join(", ");
     const body = op.body
-      ? `new OperationSpec.Body(${op.body.required}, ${q(op.body.contentType)}, ${q(op.body.projection)}${op.body.fields
+      ? `new OperationSpec.Body(${op.body.required}, ${q(op.body.contentType)}, ${q(op.body.projection)}, new OperationSpec.FieldEncoding[] {${encodings}}${op.body.fields
           .map(
             (field) =>
               `,\n              new OperationSpec.BodyField(${q(field.wireName)}, ${q(field.key)}, ${field.required})`,

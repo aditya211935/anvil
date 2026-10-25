@@ -245,7 +245,11 @@ for what each encoding puts on the wire, including how a multipart file field
 
 A parameter's `style` and `explode` are carried into AIR only when the source
 declares them; an undeclared one is left absent and serialized by OpenAPI's
-per-location default at call time. The
+per-location default at call time. A form body's media-type `encoding` map
+(per-field `style`/`explode` — Stripe declares `metadata` and `expand` as
+`deepObject`) is carried the same way, as `input.body.encoding`, so the
+runtime, the generated mock, the harness oracle, and the four SDKs all put a
+declared field on the wire as the source said. The
 [serialization table](./wire-protocols.md#parameter-serialization) names what
 each style puts on the wire and which value shapes are refused.
 
@@ -294,12 +298,21 @@ ask for:
   `graphql_field_omitted_required_args` names each such field, once per
   operation. Expose it through a root field of its own, or give the argument a
   default in the SDL.
-- The selection is **bounded**: four levels deep, and never re-entering a type
-  already on the path. Where it stops, the document selects only `__typename`,
-  and `graphql_selection_truncated` names each position. The response schema
-  renders such a position as the `TypenameOnly` component wherever it is
-  rendered inline; past the inline bound it falls back to the type's component
-  and the diagnostic says so.
+- The selection is **bounded**: four levels deep, at most 300 fields in total,
+  and never re-entering a type already on the path. The field budget is spent
+  breadth-first, so the fields nearest the root are selected first and the cut,
+  when it comes, is at the deepest frontier — an interface with hundreds of
+  implementations (GitHub's `Node`) gets `__typename` for the fragments the
+  budget does not reach, not an unsendable megabyte of document. Where the
+  selection stops, the document selects only `__typename`, and
+  `graphql_selection_truncated` names each position. The response schema
+  renders such a position as the `TypenameOnly` component.
+- A position whose selection differs from its type's full component (because
+  something below it was cut) gets a **positional component** of its own,
+  `<Type>_at_<hash>`, referenced with `$ref` and deduplicated by content. The
+  agent-facing output schema is therefore bounded by the same materialization
+  depth as every REST operation's (one `$ref` hop, then a typed stub), and an
+  exposure profile's `max_ref_depth` deepens both alike.
 
 A schema split across files compiles as one schema. SDL has no import
 statement, so composition *is* concatenation: every SDL document in the snapshot
@@ -374,6 +387,22 @@ Discovery resources and methods map mechanically into paths and operations.
 Request and response references become component schemas, and published OAuth
 scopes are preserved. Operational authorization, quotas, and tenant policy
 remain deployment concerns.
+
+A method's `path` is its wire template; `flatPath` is not used by default
+because its variable names (`{projectsId}`) do not match the method's declared
+parameters (`projectId`). The exception is a collision: when two methods share
+one verb and `path` through a reserved resource template (BigQuery's tables,
+routines and row access policies all publish `POST {+resource}:getIamPolicy`;
+Places' `get` and `photos.getMedia` both publish `GET v1/{+name}`), the OpenAPI
+path map cannot hold both. Each colliding method is then lowered on its
+`flatPath`, with every flatPath variable bound as a required path parameter and
+the expanded template parameter (`resource`, `name`) dropped. The derivation is
+verified first: the template parameter's `pattern` must be anchored, have as
+many segments as the flatPath spells, and agree with it literal for literal,
+with each `[^/]+` group facing one flatPath variable. Each rebinding is reported
+as an `info` `discovery_flatpath_binding` diagnostic. A collision that cannot be
+reconciled this way stays an `error` `discovery_endpoint_collision`, naming the
+reason, and the later method is not emitted rather than overwriting the first.
 
 ### OData metadata
 

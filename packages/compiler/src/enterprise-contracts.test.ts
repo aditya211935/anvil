@@ -83,16 +83,35 @@ describe("enterprise contract regressions", () => {
     expect(air.operations[0]?.input.body?.projection).toBe("fields");
   });
 
-  it("blocks an existing parameter that would collide with the whole-body envelope", async () => {
+  it("moves an existing parameter off the whole-body envelope instead of blocking", async () => {
     const air = await compile({ spec: contract({ body: { type: "string" } }, "body") });
+    expect(air.diagnostics.filter((d) => d.code === "duplicate_agent_input_name")).toEqual([]);
     expect(air.diagnostics).toContainEqual(
-      expect.objectContaining({ code: "duplicate_agent_input_name", level: "error" }),
+      expect.objectContaining({ code: "agent_input_name_disambiguated", level: "info" }),
     );
-    expect(air.operations[0]?.state).toBe("blocked");
+    const op = air.operations[0];
+    expect(op?.state).not.toBe("blocked");
+    // The path parameter keeps its wire name and takes a location-suffixed
+    // agent key; the `body` envelope keeps the reserved key.
+    expect(op?.input.params.map((p) => [p.name, p.agentName])).toEqual([["body", "body_path"]]);
+    expect(Object.keys(op?.input.schema?.properties ?? {})).toEqual([
+      "body_path",
+      "body",
+      "confirm",
+    ]);
   });
 
-  it("refuses a lossy Discovery lowering when two methods share a resource template", async () => {
-    const spec = JSON.stringify({
+  /**
+   * Places-shaped: `places.get` and `places.photos.getMedia` both publish
+   * `GET v1/{+name}`. With the real document's `pattern` + `flatPath` the two are
+   * distinct, provable REST operations; without them the collision is lossy.
+   */
+  function placesSpec(withBindings: boolean): string {
+    const bound = (pattern: string, flatPath: string) =>
+      withBindings
+        ? { flatPath, parameters: { name: { type: "string", location: "path", pattern } } }
+        : { parameters: { name: { type: "string", location: "path" } } };
+    return JSON.stringify({
       kind: "discovery#restDescription",
       name: "places",
       version: "v1",
@@ -104,7 +123,7 @@ describe("enterprise contract regressions", () => {
               id: "places.get",
               path: "v1/{+name}",
               httpMethod: "GET",
-              parameters: { name: { type: "string", location: "path" } },
+              ...bound("^places/[^/]+$", "v1/places/{placesId}"),
             },
           },
           resources: {
@@ -114,7 +133,10 @@ describe("enterprise contract regressions", () => {
                   id: "photos.getMedia",
                   path: "v1/{+name}",
                   httpMethod: "GET",
-                  parameters: { name: { type: "string", location: "path" } },
+                  ...bound(
+                    "^places/[^/]+/photos/[^/]+/media$",
+                    "v1/places/{placesId}/photos/{photosId}/media",
+                  ),
                 },
               },
             },
@@ -122,11 +144,40 @@ describe("enterprise contract regressions", () => {
         },
       },
     });
+  }
+
+  it("lowers a Discovery resource-template collision losslessly when pattern and flatPath prove the segments", async () => {
+    const air = await compile({ spec: placesSpec(true), serviceId: "places" });
+    expect(air.diagnostics.filter((d) => d.level === "error")).toEqual([]);
+    expect(air.diagnostics.filter((d) => d.code === "discovery_flatpath_binding")).toHaveLength(2);
+    const byId = new Map(air.operations.map((o) => [o.sourceRef.operationId, o]));
+    expect([...byId.keys()].sort()).toEqual(["photos.getMedia", "places.get"]);
+    expect(byId.get("places.get")?.sourceRef.path).toBe("/v1/places/{placesId}");
+    expect(byId.get("photos.getMedia")?.sourceRef.path).toBe(
+      "/v1/places/{placesId}/photos/{photosId}/media",
+    );
+    expect(byId.get("places.get")?.input.params.map((p) => p.name)).toEqual(["placesId"]);
+    expect(byId.get("photos.getMedia")?.input.params.map((p) => p.name)).toEqual([
+      "placesId",
+      "photosId",
+    ]);
+    // Distinct operations with distinct names on every surface.
+    expect(byId.get("places.get")?.id).not.toBe(byId.get("photos.getMedia")?.id);
+    expect(byId.get("places.get")?.mcp.toolName).not.toBe(
+      byId.get("photos.getMedia")?.mcp.toolName,
+    );
+    expect(byId.get("places.get")?.effect.kind).toBe("read");
+    expect(byId.get("photos.getMedia")?.effect.kind).toBe("read");
+  });
+
+  it("refuses a lossy Discovery lowering when a resource-template collision has nothing to bind it", async () => {
+    const spec = placesSpec(false);
     expect(() => adaptDiscovery(spec)).toThrow(/places.get.*photos.getMedia/);
     const air = await compile({ spec });
     expect(air.diagnostics).toContainEqual(
       expect.objectContaining({ code: "discovery_endpoint_collision", level: "error" }),
     );
+    expect(air.operations.map((o) => o.sourceRef.operationId)).toEqual(["places.get"]);
   });
 
   it("retains root-level Discovery methods as well as resource methods", () => {

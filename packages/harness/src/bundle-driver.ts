@@ -4,18 +4,21 @@ import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type AgentNamedInput,
   type AirDocument,
   agentPropKey,
   ladderPlan,
   type Operation,
   operationBusinessInputCliFlag,
   operationSafetyInputKeys,
-  propKey,
-  resolveIdempotencyCarrier,
-  serializeQueryParam,
-  serializeSimpleParam,
+  wireExecutability,
 } from "@anvil/air";
-import { exampleInput } from "@anvil/generators";
+import {
+  describeExampleProblem,
+  type ExampleProblem,
+  exampleInput,
+  exampleInputReport,
+} from "@anvil/generators";
 import {
   credentialProfileName,
   envPrefix,
@@ -26,6 +29,17 @@ import {
   resolveCredentials,
 } from "@anvil/runtime";
 import type { McpSource } from "./mcp-source.js";
+
+export {
+  diff,
+  type ExpectedWire,
+  expectedWire,
+  formCapture,
+  isRecord,
+  queryCapture,
+  REDACTED_HEADERS,
+  type WireLoss,
+} from "./wire-oracle.js";
 
 /**
  * Shared machinery for booting a generated bundle and driving its surfaces
@@ -74,23 +88,6 @@ export interface MockEvidence {
   tokenExchanges: TokenExchangeCapture[];
 }
 
-/** A structural divergence between what was sent and what the wire received. */
-export interface WireLoss {
-  /** JSON path of the divergence, e.g. "body.amount" or "query.limit". */
-  path: string;
-  sent: unknown;
-  received: unknown;
-}
-
-/** Headers the mock redacts; their captured value is never comparable. */
-export const REDACTED_HEADERS = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "x-api-key",
-  "api-key",
-]);
-
 /**
  * Synthesized arguments for one invocation. Idempotency keys are made unique
  * per call — replaying the example key would let the runtime's ledger serve the
@@ -104,6 +101,36 @@ export function argsFor(op: Operation, tag: string): Record<string, unknown> {
     args[key] = `${tag}-${randomUUID()}`;
   }
   return args;
+}
+
+/**
+ * Why the synthesized arguments may not satisfy the operation's own input
+ * schema: a contradiction the schema admits no value for, or a `oneOf` whose
+ * alternatives cannot be told apart by value (`@anvil/generators`).
+ */
+export function synthesisProblems(op: Operation): ExampleProblem[] {
+  return exampleInputReport(op).problems;
+}
+
+/** The generated MCP server's input-validation refusal (the SDK's -32602), as its text reads. */
+const INPUT_REFUSAL = /-32602|Input validation error|Invalid arguments for tool/i;
+
+/**
+ * Turn a tool's input-validation refusal of the synthesized arguments into a
+ * finding a reviewer can act on. The raw zod message ("more than one option
+ * matched at body.body") names the symptom; the synthesis report names the
+ * cause and, where one exists, the manifest remedy. Returns the raw text
+ * unchanged when the refusal is not about input validation or synthesis found
+ * nothing wrong — then the server is the one to question.
+ */
+export function explainInputRefusal(op: Operation, text: string): string {
+  if (!INPUT_REFUSAL.test(text)) return trim(text);
+  const problems = synthesisProblems(op);
+  if (problems.length === 0) return trim(text);
+  return (
+    `synthesized arguments cannot satisfy the operation's own input schema — ` +
+    `${problems.map(describeExampleProblem).join("; ")} (server said: ${trim(text)})`
+  );
 }
 
 /**
@@ -313,17 +340,23 @@ export async function probeVirtualOboWiring(
 /**
  * The CLI flags that carry a seeded input object to the generated tool CLI.
  * This is the exact inverse of the CLI engine's flag→input mapping (tool-cli
- * reads `cliFlag(name)` and writes `propKey(name)`), derived from the very same
+ * reads the input's CLI flag and writes its `agentPropKey`), derived from the very same
  * operation contract — so the CLI surface receives the identical logical input
  * the MCP surface receives as a tool-args object. Boolean-valued fields are
  * skipped (they map to bare `--flag` toggles the caller adds explicitly).
  */
 export function cliFlagsFor(op: Operation, args: Record<string, unknown>): string[] {
   const out: string[] = [];
-  const emit = (location: Parameters<typeof operationBusinessInputCliFlag>[1], name: string) => {
-    const flag = operationBusinessInputCliFlag(op, location, name);
+  const emit = (
+    location: Parameters<typeof operationBusinessInputCliFlag>[1],
+    node: AgentNamedInput,
+  ) => {
+    const flag = operationBusinessInputCliFlag(op, location, node.name);
     if (!flag) return;
-    const value = args[propKey(name)];
+    // The seeded object is keyed by the agent-facing key, which differs from
+    // the snake-cased wire name whenever the compiler re-projected a colliding
+    // input (Twilio's `EndTime<` → `end_time_lt`).
+    const value = args[agentPropKey(node)];
     if (value === undefined || value === null) return;
     // Use @anvil/air's real cliFlag, never a local re-implementation — the CLI
     // engine parses exactly these flags, and only the shared function handles
@@ -331,12 +364,15 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
     // boolean *field* (e.g. an Edm.Boolean property) is a value flag `--f true`,
     // not a bare toggle — the tool CLI coerces it back; only the injected
     // `confirm`/`dry-run` control toggles are bare, and those are never fields
-    // iterated here.
-    out.push(flag, String(value));
+    // iterated here. A structured value (an array or object parameter —
+    // Stripe's deepObject `expand` and `created`) travels as JSON, the CLI's
+    // convention for any input that is not one scalar, so the CLI receives the
+    // identical logical value the MCP tool receives as an args object.
+    out.push(flag, typeof value === "object" ? JSON.stringify(value) : String(value));
   };
-  for (const p of op.input.params) emit(p.in, p.name);
+  for (const p of op.input.params) emit(p.in, p);
   if (op.input.body?.projection === "fields") {
-    for (const f of op.input.body.fields) emit("body", f.name);
+    for (const f of op.input.body.fields) emit("body", f);
   } else if (op.input.body && args.body !== undefined && args.body !== null) {
     out.push("--body", JSON.stringify(args.body));
   }
@@ -348,148 +384,51 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
 }
 
 /**
- * A GET operation that still carries a request body cannot be sent by fetch at
- * all; probing one for error/retry behavior would only re-report its fidelity
- * failure under the wrong check id. Current adapters emit truthful POST
- * methods, so this only guards bundles compiled before that change.
+ * Why the hermetic lanes cannot put this operation on the wire, or undefined
+ * when they can. Both the loopback self-test and the conformance harness skip
+ * — never fail — the checks that need a wire request for such an operation,
+ * and say why in the check's detail.
+ *
+ * Two reasons exist. The runtime's own transport gate (`wireExecutability`):
+ * the lanes declare the generated mock as a protocol facade, which answers a
+ * *coordinates* refusal (a transcoded gRPC method, a bridged queue exchange)
+ * but can never answer a *framing* one — a streaming RPC, a gRPC method whose
+ * `google.api.http` rule the compiler declined, a subscription with no bound.
+ * The runtime refuses those with `unsupported_operation` even under the
+ * facade, which the compiler already reported as `unexecutable_transport`;
+ * failing a self-test on the same fact a third time would make an honestly
+ * compiled bundle look broken. And the legacy GET-with-body shape, which fetch
+ * cannot send at all: current adapters emit truthful POST methods, so that
+ * branch only guards bundles compiled before that change.
  */
-export function wireable(op: Operation): boolean {
-  const method = (op.sourceRef.method ?? "get").toLowerCase();
-  return method !== "get" || (!op.input.body && !op.input.params.some((p) => p.in === "body"));
-}
-
-export interface ExpectedWire {
-  path: string;
-  /** Same shape as `CaptureRecord.query`: a repeated key is an array. */
-  query: Record<string, string | string[]>;
-  headers: Record<string, string>;
-  body: unknown;
-}
-
-/** Add one name/value pair the way the mock records it: a repeat becomes an array. */
-function addQueryPair(query: Record<string, string | string[]>, name: string, value: string): void {
-  const existing = query[name];
-  if (existing === undefined) query[name] = value;
-  else if (Array.isArray(existing)) existing.push(value);
-  else query[name] = [existing, value];
-}
-
-function withNestedValue(value: unknown, path: readonly string[], key: string): unknown {
-  const root = isRecord(value) ? structuredClone(value) : {};
-  let current = root;
-  for (const segment of path.slice(0, -1)) {
-    const next = current[segment];
-    if (isRecord(next)) {
-      current = next;
-    } else {
-      const created: Record<string, unknown> = {};
-      current[segment] = created;
-      current = created;
-    }
+export function wireRefusal(op: Operation): string | undefined {
+  const verdict = wireExecutability(op);
+  if (!verdict.ok && verdict.scope === "framing") {
+    return `not wire-executable: speaks ${verdict.protocol} — ${verdict.reason}`;
   }
-  current[path[path.length - 1] as string] = key;
-  return root;
+  const method = (op.sourceRef.method ?? "get").toLowerCase();
+  if (method === "get" && (carriesBody(op) || op.input.params.some((p) => p.in === "body"))) {
+    return "not wire-executable: a GET cannot carry the request body this operation declares";
+  }
+  return undefined;
 }
 
 /**
- * The wire request the AIR contract promises for these args. Derived from AIR
- * here, independently of the executor's own request builder — the self-test is
- * an oracle over the contract, not a mirror of the implementation.
+ * Whether a declared request body can ever put bytes on the wire. Stripe
+ * declares an optional `application/x-www-form-urlencoded` body with an empty
+ * schema on every GET; it projects to zero fields, so the executor binds
+ * nothing and sends no body at all — the declaration is noise, not a body a
+ * GET would have to carry.
  */
-export function expectedWire(op: Operation, args: Record<string, unknown>): ExpectedWire {
-  let path = op.sourceRef.path ?? "/";
-  const query: Record<string, string | string[]> = {};
-  const headers: Record<string, string> = {};
-  const fields: Record<string, unknown> = {};
-  let hasBody = false;
-  // Serialized by the one table in @anvil/air that the runtime binds through
-  // (`param-style.ts`), so this oracle asks for what the contract promises
-  // rather than agreeing with whatever the executor happened to send. A value
-  // the table refuses is left off the expectation: the runtime refuses the
-  // call before the wire, so no capture exists to compare it against.
-  for (const p of op.input.params) {
-    const value = args[agentPropKey(p)];
-    if (value === undefined || value === null) continue;
-    if (p.in === "path") {
-      const bound = serializeSimpleParam(p, value, encodeURIComponent);
-      if (bound.ok) path = path.replace(`{${p.name}}`, bound.text);
-    } else if (p.in === "query") {
-      const bound = serializeQueryParam(p, value);
-      if (bound.ok) for (const [name, text] of bound.pairs) addQueryPair(query, name, text);
-    } else if (p.in === "header" && !REDACTED_HEADERS.has(p.name.toLowerCase())) {
-      const bound = serializeSimpleParam(p, value);
-      if (bound.ok) headers[p.name.toLowerCase()] = bound.text;
-    } else if (p.in === "body") {
-      fields[p.name] = value;
-      hasBody = true;
-    }
-  }
-  let body: unknown;
-  const b = op.input.body;
-  if (b?.projection === "fields") {
-    for (const f of b.fields) {
-      const value = args[agentPropKey(f)];
-      if (value === undefined || value === null) continue;
-      fields[f.name] = value;
-      hasBody = true;
-    }
-  } else if (b && args.body !== undefined && args.body !== null) {
-    body = args.body;
-  }
-  if (body === undefined && hasBody) body = fields;
-  const carrier = resolveIdempotencyCarrier(op);
-  const safetyKey = operationSafetyInputKeys(op).idempotencyKey;
-  const key = typeof args[safetyKey] === "string" ? args[safetyKey] : undefined;
-  if (carrier.ok && carrier.binding && key) {
-    const binding = carrier.binding;
-    switch (binding.mechanism) {
-      case "header":
-        if (!REDACTED_HEADERS.has(binding.key.toLowerCase())) {
-          headers[binding.key.toLowerCase()] = key;
-        }
-        break;
-      case "query":
-        query[binding.key] = key;
-        break;
-      case "path":
-        path = path.replace(`{${binding.key}}`, encodeURIComponent(key));
-        break;
-      case "body":
-        body = withNestedValue(body, binding.path, key);
-        break;
-    }
-  }
-  return { path, query, headers, body };
+function carriesBody(op: Operation): boolean {
+  const body = op.input.body;
+  if (!body) return false;
+  return body.required || body.projection !== "fields" || body.fields.length > 0;
 }
 
-/** The mock's query capture shape from a URL: a repeated key becomes an array. */
-export function queryCapture(params: URLSearchParams): Record<string, string | string[]> {
-  const query: Record<string, string | string[]> = {};
-  for (const [name, value] of params) addQueryPair(query, name, value);
-  return query;
-}
-
-/** Structural diff producing loss entries with JSON paths; walks both sides. */
-export function diff(sent: unknown, received: unknown, path: string, losses: WireLoss[]): void {
-  if (isRecord(sent) && isRecord(received)) {
-    for (const key of new Set([...Object.keys(sent), ...Object.keys(received)])) {
-      diff(sent[key], received[key], `${path}.${key}`, losses);
-    }
-    return;
-  }
-  if (Array.isArray(sent) && Array.isArray(received)) {
-    if (sent.length !== received.length) {
-      losses.push({ path: `${path}.length`, sent: sent.length, received: received.length });
-      return;
-    }
-    for (let i = 0; i < sent.length; i++) diff(sent[i], received[i], `${path}[${i}]`, losses);
-    return;
-  }
-  if (!Object.is(sent, received)) losses.push({ path, sent, received });
-}
-
-export function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+/** Whether the hermetic lanes can drive this operation to the wire; see `wireRefusal`. */
+export function wireable(op: Operation): boolean {
+  return wireRefusal(op) === undefined;
 }
 
 export function parseJson(text: string): unknown {

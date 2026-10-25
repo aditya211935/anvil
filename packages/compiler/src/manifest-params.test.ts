@@ -68,6 +68,60 @@ describe("manifest params", () => {
     expect(latest?.schema).toEqual({ type: "string" });
   });
 
+  it("retypes a property below a top-level body field by its dotted name", async () => {
+    // Intercom types a contact id as `format: uuid` with min/maxLength 24 — no
+    // string satisfies both — and the field sits inside the body's `from` object.
+    const spec = `openapi: 3.0.3
+info: { title: Intercom, version: 1.0.0 }
+paths:
+  /conversations:
+    post:
+      operationId: createConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, body]
+              properties:
+                from:
+                  type: object
+                  required: [type, id]
+                  properties:
+                    type: { type: string, enum: [user, lead] }
+                    id: { type: string, format: uuid, minLength: 24, maxLength: 24, description: The contact id. }
+                body: { type: string }
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({
+      spec,
+      serviceId: "intercom",
+      manifest: [
+        "operations:",
+        "  createConversation:",
+        "    params:",
+        '      "from.id": { type: string, pattern: "^[0-9a-f]{24}$" }',
+      ].join("\n"),
+    });
+    const op = air.operations[0];
+    if (!op?.input.body) throw new Error("createConversation did not compile with a body");
+    const from = (op.input.body.schema.properties as Record<string, Record<string, unknown>>).from;
+    if (!from) throw new Error("body has no `from` property");
+    const id = (from.properties as Record<string, Record<string, unknown>>).id;
+    expect(id).toEqual({
+      type: "string",
+      pattern: "^[0-9a-f]{24}$",
+      description: "The contact id.",
+    });
+    // The assembled input schema the MCP server validates against sees the
+    // retyped leaf, and the unsatisfiable uuid format is gone from it.
+    const served = JSON.stringify(op?.input.schema);
+    expect(served).toContain('"pattern":"^[0-9a-f]{24}$"');
+    expect(served).not.toContain('"format":"uuid"');
+    expect(op?.reviewNotes).toContain("Input 'from.id' retyped by manifest: string → string.");
+  });
+
   it("declines a name nothing carries, with the reason", async () => {
     const air = await compile({
       spec: SLACK,

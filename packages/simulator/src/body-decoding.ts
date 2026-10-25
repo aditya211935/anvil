@@ -78,11 +78,135 @@ function parseJson(raw: Buffer): DecodedBody {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The bracket segments of a deepObject key's tail: `[address][0]` → `["address", "0"]`. */
+function bracketSegments(tail: string): string[] {
+  const out: string[] = [];
+  const bracket = /\[([^\]]*)\]/g;
+  for (let m = bracket.exec(tail); m !== null; m = bracket.exec(tail)) out.push(m[1] ?? "");
+  return out;
+}
+
+/** The schema one bracket segment down: an array's items, an object's property or its map value. */
+function childSchema(schema: JsonSchema | undefined, segment: string): JsonSchema | undefined {
+  if (!schema) return undefined;
+  const alternatives = (schema.anyOf ?? schema.oneOf) as JsonSchema[] | undefined;
+  if (Array.isArray(alternatives) && schema.type === undefined && !isRecord(schema.properties)) {
+    // Stripe's `created` is `anyOf [range object, integer]`; a bracketed key
+    // can only have come from the structured branch.
+    const structured = alternatives.find(
+      (a) => a.type === "object" || a.type === "array" || isRecord(a.properties) || a.items,
+    );
+    return childSchema(structured, segment);
+  }
+  if (schemaType(schema) === "array" || schema.items !== undefined) {
+    return (schema.items as JsonSchema | undefined) ?? undefined;
+  }
+  const props = schema.properties as Record<string, JsonSchema> | undefined;
+  if (props?.[segment]) return props[segment];
+  const extra = schema.additionalProperties;
+  return isRecord(extra) ? (extra as JsonSchema) : undefined;
+}
+
+/**
+ * The scalar type a bare (unbracketed) value of this schema has: its own type,
+ * or the scalar branch of a union such as Stripe's `created: anyOf [range
+ * object, integer]`, whose `created=7` is the integer and not the text "7".
+ */
+function scalarBranchType(schema: JsonSchema | undefined): unknown {
+  const own = schemaType(schema);
+  if (own !== undefined) return own;
+  const alternatives = (schema?.anyOf ?? schema?.oneOf) as JsonSchema[] | undefined;
+  if (!Array.isArray(alternatives)) return undefined;
+  const scalarTypes = new Set(["integer", "number", "boolean", "string"]);
+  return alternatives.map(schemaType).find((t) => typeof t === "string" && scalarTypes.has(t));
+}
+
+/**
+ * Bracket segments no contract value is addressed by. `__proto__`,
+ * `constructor` and `prototype` would make the walk read an inherited object
+ * and then write through it — `metadata[__proto__][polluted]=yes` reaches
+ * `Object.prototype` of the whole process, before any schema validation sees
+ * the body. An index past the cap would allocate a sparse array of that
+ * length for one pair. Both come only from a hostile client (the runtime emits
+ * indices from real arrays and names from real keys), so the pair is dropped.
+ */
+const PROTOTYPE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_INDEX = 10_000;
+function isHostileSegment(segment: string): boolean {
+  return PROTOTYPE_SEGMENTS.has(segment) || (/^\d+$/.test(segment) && Number(segment) > MAX_INDEX);
+}
+
+function assignBracketed(
+  current: unknown,
+  segments: readonly string[],
+  text: string,
+  schema: JsonSchema | undefined,
+): unknown {
+  const [head, ...rest] = segments;
+  if (head === undefined) return scalar(text, schemaType(schema));
+  const child = childSchema(schema, head);
+  if (/^\d+$/.test(head)) {
+    const list: unknown[] = Array.isArray(current) ? current : [];
+    list[Number(head)] = assignBracketed(list[Number(head)], rest, text, child);
+    return list;
+  }
+  const record: Record<string, unknown> = isRecord(current) ? current : {};
+  // Own properties only: an inherited value (`toString`) is never a place to
+  // write into, and the record starts fresh at that key.
+  const own = Object.hasOwn(record, head) ? record[head] : undefined;
+  record[head] = assignBracketed(own, rest, text, child);
+  return record;
+}
+
+/**
+ * The inverse of the runtime's `deepObject` encoding: every wire pair under
+ * `root` (`root`, `root[a]`, `root[items][0][price]`) folded back into the one
+ * value the caller bound — an object by key, an array by index — with each
+ * leaf typed by its schema path. Read only for a parameter or body field the
+ * contract declares `deepObject`; an undeclared bracketed key stays a key.
+ */
+export function decodeDeepObject(
+  root: string,
+  schema: JsonSchema | undefined,
+  pairs: Iterable<[string, string]>,
+): unknown {
+  let value: unknown;
+  for (const [key, text] of pairs) {
+    if (key === root) {
+      value = scalar(text, scalarBranchType(schema));
+    } else if (key.startsWith(`${root}[`)) {
+      const segments = bracketSegments(key.slice(root.length));
+      if (segments.some(isHostileSegment)) continue;
+      value = assignBracketed(value, segments, text, schema);
+    }
+  }
+  return value;
+}
+
 function decodeForm(op: Operation, raw: Buffer): DecodedBody {
   const form = new URLSearchParams(raw.toString("utf8"));
   const out: Record<string, unknown> = {};
+  const encodings = op.input.body?.encoding ?? {};
+  const deep = new Set<string>();
   for (const name of new Set(form.keys())) {
+    const bracket = name.indexOf("[");
+    const root = bracket === -1 ? name : name.slice(0, bracket);
+    // A field the contract declares `deepObject` arrives as bracketed keys
+    // (`metadata[order]=123`), which fold back into the field; any other field
+    // is read as the plain form it is.
+    if (encodings[root]?.style === "deepObject") {
+      deep.add(root);
+      continue;
+    }
     out[name] = coerceWireValues(fieldSchema(op, name), form.getAll(name), false);
+  }
+  for (const root of deep) {
+    const value = decodeDeepObject(root, fieldSchema(op, root), form.entries());
+    if (value !== undefined) out[root] = value;
   }
   return { ok: true, value: out };
 }

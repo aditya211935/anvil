@@ -52,7 +52,7 @@ encode, otherwise the source's first declaration verbatim.
 | Content type | On the wire |
 | --- | --- |
 | `application/json`, any `*+json` | `JSON.stringify` of the bound body, byte-for-byte as before |
-| `application/x-www-form-urlencoded` | `URLSearchParams` semantics: scalars as `name=value`, an array as a repeated key. A nested object has no form representation and is refused |
+| `application/x-www-form-urlencoded` | Field by field through the parameter table: a scalar as `name=value`, an array of scalars as a repeated key, and a field the source gave an `encoding` for (OpenAPI's per-field `style`/`explode`, carried into AIR as `input.body.encoding`) by that declared style — `deepObject` brackets (`metadata[order]=123`, `expand[0]=charges`, `items[0][price]=p_1`), the delimiter styles join. A nested object or an array of objects with no declared encoding has no form representation and is refused |
 | `multipart/form-data` | RFC 7578 multipart with a random boundary per request. A string, number, or boolean field is a text part; an object is a JSON part; a field whose schema is `type: string, format: binary` (or `format: byte`, or `contentEncoding: base64`) is a file part — the agent supplies base64, the wire gets the decoded bytes with `filename="<field>"` and the schema's `contentMediaType` (default `application/octet-stream`) |
 | Anything else (`application/octet-stream`, `text/plain`, `application/xml` on a non-SOAP operation, …) | Refused |
 
@@ -69,10 +69,11 @@ A dry run shows a JSON body decoded, a form body as its encoded text, and a
 multipart body as its size and content type — the boundary is random, so the
 bytes themselves are not a plan.
 
-The four generated SDKs encode JSON bodies only. A form or multipart body is
+The four generated SDKs encode JSON and form-urlencoded bodies from the same
+table — the same declared encodings, the same refusals. A multipart body is
 refused by their encoding gate with the same `unsupported_operation`, before a
 delegated token is resolved, and the refusal points at the generated CLI and
-MCP server, whose shared runtime does encode them. The SDK manifest carries
+MCP server, whose shared runtime does encode it. The SDK manifest carries
 each operation's `bodyContentType`, and certification refuses a client whose
 manifest disagrees with AIR about it.
 
@@ -89,13 +90,19 @@ declared them, so a document from before the fields hashes exactly as before.
 | query `form`, explode (default) | `tag=a&tag=b` | `x=1&y=2` |
 | query `form`, no explode | `tag=a,b` | `tag=x,1,y,2` |
 | query `spaceDelimited` / `pipeDelimited` | `tag=a b` / `tag=a\|b` | refused |
-| query `deepObject` | refused | `tag[x]=1&tag[y]=2` |
+| query `deepObject` | `tag[0]=a&tag[1]=b` | `tag[x]=1&tag[y]=2` |
 | path / header `simple` | `a,b` | `x,1,y,2`; exploded `x=1,y=2` |
 
 A path item is percent-encoded and the commas between items are kept literal.
 An object inside an object, an array of objects, and anything else no style
 gives a meaning to is refused with `unsupported_operation` before the request
-is built — never sent as `[object Object]`.
+is built — never sent as `[object Object]`. The one style that gives nesting a
+meaning is a declared `deepObject`: it brackets recursively, an array by index
+and an object by key (`shipping[address][city]=Oslo`, `items[0][price]=p_1`),
+which is the reading every service that declares the style uses (Stripe's
+whole API is encoded this way) where OpenAPI 3.0 leaves nesting undefined.
+Anvil's simulator folds the same brackets back into the value for a parameter
+or form field the contract declares `deepObject`.
 
 The one table lives in `@anvil/air` (`param-style.ts`). The runtime binds
 through it, the hermetic harness derives its wire expectation from it (so the
@@ -149,11 +156,15 @@ cannot promise what the document does not ask for. A union or interface is
 selected through inline fragments — `{ __typename ... on Product { … } }` —
 and its schema is a `oneOf` of the members. A field that takes a required
 argument is selected nowhere and listed nowhere (`graphql_field_omitted_required_args`).
-Where the selection stops — four levels deep, or on re-entering a type — the
+Where the selection stops — four levels deep, 300 fields in total (spent
+breadth-first, nearest the root first), or on re-entering a type — the
 document selects only `__typename`, the schema shows the `TypenameOnly`
 component at that position, and `graphql_selection_truncated` names it. A
-compiled operation always carries its binding; a GraphQL operation without
-one was not produced by this compiler, and the transport gate says so.
+position the cut makes different from its type's component is a positional
+component (`<Type>_at_<hash>`) referenced by `$ref`, so the bounded projection
+is one `$ref` hop deep for GraphQL exactly as it is for REST. A compiled
+operation always carries its binding; a GraphQL operation without one was not
+produced by this compiler, and the transport gate says so.
 
 GraphQL can return an `errors` array with HTTP 200. Anvil treats that response
 as a failure, including responses that contain both `data` and `errors`.

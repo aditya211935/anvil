@@ -816,6 +816,62 @@ describe("materializeSchema", () => {
     expect(() => JSON.stringify(small.schema)).not.toThrow();
   });
 
+  it("drops a constraint list the budget emptied instead of emitting one that admits nothing", () => {
+    // Stripe's `tax_id_data[].type` carries a ~100-entry enum; past the node
+    // budget the list node was stubbed to `[]`, and `enum: []` (like `anyOf: []`)
+    // admits NO value — the generated MCP server then refused every string as
+    // `never`. A truncated constraint must loosen, never tighten. Three nodes
+    // (root, its properties map, the property) spend a budget of 3, so the
+    // property's own list is the first node the exhausted budget stubs.
+    const truncated = (property: Record<string, unknown>) => {
+      const schema = { type: "object", properties: { p: property } };
+      const small = materializeSchema(schema, {}, DEFAULT_MAX_REF_DEPTH, 3);
+      expect(small.nodeBudgetLimitedAt).toEqual([
+        "$.properties.p.<list>".replace(
+          "<list>",
+          Object.keys(property).find((k) => Array.isArray(property[k])) ?? "",
+        ),
+      ]);
+      // The full-budget shape is untouched: nothing is dropped that was not emptied.
+      expect(
+        materializeSchema(schema, {}, DEFAULT_MAX_REF_DEPTH, DEFAULT_MAX_SCHEMA_NODES).schema,
+      ).toEqual(schema);
+      return (small.schema as { properties: { p: Record<string, unknown> } }).properties.p;
+    };
+
+    const kind = truncated({ type: "string", enum: ["a", "b", "c"], description: "The kind." });
+    expect(kind.enum).toBeUndefined();
+    expect(kind.type).toBe("string");
+    expect(kind.description).toBe(
+      "The kind. (`enum` with 3 entries truncated by Anvil to keep the schema bounded; any value of the remaining type is accepted here)",
+    );
+
+    const rates = truncated({
+      anyOf: [
+        { type: "array", items: { type: "string" } },
+        { type: "string", enum: [""] },
+      ],
+    });
+    expect(rates.anyOf).toBeUndefined();
+    expect(String(rates.description)).toContain("`anyOf` with 2 entries truncated");
+
+    const pick = truncated({
+      oneOf: [{ type: "string" }, { type: "integer" }],
+      discriminator: { propertyName: "k" },
+    });
+    expect(pick.oneOf).toBeUndefined();
+    expect(pick.discriminator).toBeUndefined();
+
+    const maybe = truncated({ type: ["string", "null"], description: "Maybe." });
+    expect(maybe.type).toBeUndefined();
+    expect(String(maybe.description)).toMatch(/^Maybe\. \(`type` with 2 entries truncated/);
+
+    // Lists that only loosen when emptied keep the array stub.
+    const must = truncated({ type: "object", required: ["x", "y"], properties: {} });
+    expect(must.required).toEqual([]);
+    expect(must.type).toBe("object");
+  });
+
   it("leaves a normal-sized schema untouched by the node budget (real specs top out ~1000 nodes)", () => {
     // A realistic operation schema (PagerDuty's largest is ~1000 nodes) must be
     // byte-identical with or without the budget — the budget only fires on
@@ -828,6 +884,54 @@ describe("materializeSchema", () => {
     const noBudget = materializeSchema(ref, namedSchemas, 1, Number.MAX_SAFE_INTEGER);
     expect(withBudget.schema).toEqual(noBudget.schema);
     expect(withBudget.nodeBudgetLimitedAt).toEqual([]);
+  });
+
+  it("charges a memoized named schema at every position it is reused, so output tree size obeys the budget", () => {
+    // The memo returns one shared object for every further use of a named
+    // schema, but `JSON.stringify` writes a copy per position — so a schema
+    // that reaches the same 60-node type from 500 positions is 30,000 output
+    // nodes although only ~560 were ever walked. GitHub's `Query.nodes`
+    // materialized to 49,000 nodes under a 4,000-node budget exactly this way.
+    const fields: Record<string, unknown> = {};
+    for (let j = 0; j < 60; j++) fields[`f${j}`] = { type: "string" };
+    const namedSchemas = { Big: { type: "object", properties: fields } };
+    const positions: Record<string, unknown> = {};
+    for (let i = 0; i < 500; i++) positions[`p${i}`] = { $ref: "#/components/schemas/Big" };
+    const schema = { type: "object", properties: positions };
+
+    const treeSize = (value: unknown): number => {
+      let count = 0;
+      const stack: unknown[] = [value];
+      while (stack.length > 0) {
+        const v = stack.pop();
+        if (v === null || typeof v !== "object") continue;
+        count++;
+        for (const c of Array.isArray(v) ? v : Object.values(v)) stack.push(c);
+      }
+      return count;
+    };
+
+    const budget = 4000;
+    const bounded = materializeSchema(schema, namedSchemas, 1, budget);
+    expect(bounded.nodeBudgetLimitedAt.length).toBeGreaterThan(0);
+    // Every position still has a value — the ones past the budget are typed
+    // stubs (one node each), never a silently dropped property.
+    const out = bounded.schema as { properties: Record<string, Record<string, unknown>> };
+    expect(Object.keys(out.properties)).toHaveLength(500);
+    expect(out.properties.p0).toMatchObject({ type: "object", properties: expect.any(Object) });
+    expect(out.properties.p499).toMatchObject({ type: "object" });
+    expect(out.properties.p499?.properties).toBeUndefined();
+    expect(String(out.properties.p499?.description)).toContain("'Big'");
+    // The output's TREE size is what the budget bounds: budget plus one stub
+    // per remaining position, not 500 copies of the 61-node body.
+    expect(treeSize(bounded.schema)).toBeLessThanOrEqual(budget + 500);
+    expect(treeSize(bounded.schema)).toBeLessThan(500 * 61);
+
+    // With room for every copy (each position: the `$ref` node plus the
+    // 62-node body) the memo is still used and nothing is cut.
+    const roomy = materializeSchema(schema, namedSchemas, 1, 2 + 500 * 63 + 10);
+    expect(roomy.nodeBudgetLimitedAt).toEqual([]);
+    expect(treeSize(roomy.schema)).toBe(1 + 1 + 500 * 62);
   });
 
   const unionNamed = {

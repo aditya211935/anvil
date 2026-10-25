@@ -1,0 +1,176 @@
+# Schema features the loopback self-test must synthesize valid arguments for,
+# the way the generated MCP server validates them (zod from the AIR schema):
+# formats, a pattern, an enum, lengths, numeric and array bounds, a nullable
+# type list, a declared example the schema itself refuses, unions that can be
+# told apart by value and unions that cannot (narrowed by the companion
+# manifest, selftest-schema-features.anvil.yaml), and a form-urlencoded body.
+openapi: 3.1.0
+info: { title: Features, version: "1.0.0" }
+servers:
+  - url: https://features.example.com/api
+paths:
+  /things:
+    get:
+      operationId: listThings
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 10, maximum: 100 } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: owner, in: query, schema: { type: string, format: email } }
+      responses:
+        "200":
+          description: The things.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Thing" } }
+        "404":
+          description: Not found.
+    post:
+      operationId: createThing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ThingWrite" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Thing" }
+  /things/{id}/reply:
+    post:
+      operationId: replyThing
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ContactReply"
+                - $ref: "#/components/schemas/AdminReply"
+      responses:
+        "201":
+          description: Replied.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string } } }
+  /pages:
+    post:
+      operationId: createPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PageWrite" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string } } }
+  /forms:
+    post:
+      operationId: submitForm
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [name, amount]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 40 }
+                amount: { type: integer, minimum: 100 }
+                tags: { type: array, items: { type: string } }
+                notify: { type: boolean }
+      responses:
+        "201":
+          description: Submitted.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string } } }
+components:
+  schemas:
+    Thing:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+    ThingWrite:
+      type: object
+      required: [id, name, code, kind, when, count, tags, choice, later]
+      properties:
+        # The declared example is not a UUID: the schema refuses it, so synthesis must not teach it.
+        id: { type: string, format: uuid, example: not-a-uuid }
+        name: { type: string, minLength: 3, maxLength: 5 }
+        code: { type: string, pattern: "^[A-Z]{3}-[0-9]{2}$" }
+        kind: { type: string, enum: [alpha, beta] }
+        when: { type: string, format: date-time }
+        day: { type: string, format: date }
+        contact: { type: string, format: email }
+        site: { type: string, format: uri }
+        host: { type: string, format: ipv4 }
+        count: { type: integer, minimum: 10, maximum: 20, multipleOf: 5 }
+        ratio: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }
+        tags: { type: array, items: { type: string }, minItems: 2, uniqueItems: true }
+        note: { type: [string, "null"] }
+        # Discriminable by value: each alternative requires a key the other closes out.
+        choice:
+          oneOf:
+            - type: object
+              required: [card]
+              additionalProperties: false
+              properties: { card: { type: string } }
+            - type: object
+              required: [bank]
+              additionalProperties: false
+              properties: { bank: { type: string } }
+        # Only the second alternative has a witness of its own: {a} matches both,
+        # {a, b} matches the open alternative alone.
+        later:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              properties: { a: { type: string } }
+            - type: object
+              properties: { a: { type: string }, b: { type: string } }
+        # Stripe's shape: a list, or the empty string to clear it.
+        either:
+          anyOf:
+            - { type: array, items: { type: string, enum: [x, y] } }
+            - { type: string, enum: [""] }
+    ContactReply:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        body: { type: string }
+    AdminReply:
+      type: object
+      required: [admin_id]
+      properties:
+        admin_id: { type: string }
+        body: { type: string }
+    PageWrite:
+      type: object
+      required: [title, body]
+      properties:
+        title: { type: string }
+        body:
+          oneOf:
+            - $ref: "#/components/schemas/PageBodyWrite"
+            - $ref: "#/components/schemas/PageNestedBodyWrite"
+    PageBodyWrite:
+      type: object
+      properties:
+        representation: { type: string, enum: [storage, wiki] }
+        value: { type: string }
+    PageNestedBodyWrite:
+      type: object
+      properties:
+        storage: { $ref: "#/components/schemas/PageBodyWrite" }
+        wiki: { $ref: "#/components/schemas/PageBodyWrite" }

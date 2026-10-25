@@ -129,7 +129,14 @@ operations:
   deleteIssueLink: { state: approved }
   getIssueLinkTypes: { state: approved }
   getIssueTypesForProject: { state: approved }
-  searchProjects: { state: approved }
+  # Jira documents `properties` as "a comma-separated list" of property keys,
+  # but the published schema types it as an array of `StringList` — an empty
+  # object (`{type: object, additionalProperties: false}`) — which no query
+  # parameter style can carry. Retype it to the string the service really reads.
+  searchProjects:
+    state: approved
+    params:
+      properties: { type: string }
   getProject: { state: approved }
   getProjectComponents: { state: approved }
   getProjectVersions: { state: approved }

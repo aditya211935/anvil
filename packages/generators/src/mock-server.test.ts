@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { request } from "node:http";
 import { connect } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -69,6 +70,8 @@ interface CaptureView {
   pathParams: Record<string, string> | null;
   query: Record<string, string>;
   headers: Record<string, string>;
+  body: unknown;
+  validation: { ok: boolean; missing: string[]; invalid: string[] };
 }
 
 interface TokenExchangeView {
@@ -150,6 +153,47 @@ describe("generated mock server", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string; missing: string[] } };
     expect(body.error.code).toBe("mock_validation_failed");
+    expect(body.error.missing).toContain("body.currency");
+  });
+
+  it("captures a form-urlencoded body as its wire pairs and reads required fields through brackets", async () => {
+    await reset();
+    // The contract declares JSON, but the mock reads a body by the content
+    // type it arrived in: a form is captured as exactly the pairs on the wire,
+    // a repeated key as an array, and a deepObject field (`metadata[order]`)
+    // under its bracketed name — so a self-test compares against the wire,
+    // not a reconstruction of it. The bracketed field still counts as sent.
+    const res = await fetch(`${base}/payments/p_1/refunds`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "amount=100&currency=USD&expand%5B0%5D=customer&tags=a&tags=b",
+    });
+    expect(res.status).toBe(201);
+    const [req] = await capture();
+    if (!req) throw new Error("mock server captured no request");
+    expect(req.validation.ok).toBe(true);
+    expect(req.body).toEqual({
+      amount: "100",
+      currency: "USD",
+      "expand[0]": "customer",
+      tags: ["a", "b"],
+    });
+
+    // A required field present only as bracketed keys is present.
+    const bracketed = await fetch(`${base}/payments/p_1/refunds`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "amount=100&currency%5Bcode%5D=USD",
+    });
+    expect(bracketed.status).toBe(201);
+    // And a required field absent from a form body is still missing.
+    const missing = await fetch(`${base}/payments/p_1/refunds`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "amount=100",
+    });
+    expect(missing.status).toBe(400);
+    const body = (await missing.json()) as { error: { missing: string[] } };
     expect(body.error.missing).toContain("body.currency");
   });
 
@@ -516,5 +560,117 @@ operations:
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { invalid: string[] } };
     expect(body.error.invalid.join(" ")).toMatch(/expected a JSON string/);
+  });
+});
+
+/**
+ * A body is decoded the way its content type says. Stripe's bodies are
+ * `application/x-www-form-urlencoded`: the runtime sends `name=value` pairs,
+ * and a mock that parsed them as JSON refused every one with a 400 that the
+ * self-test could only report as "upstream returned 400".
+ */
+describe("generated mock server: form-urlencoded bodies", () => {
+  let formDir: string;
+  let formChild: ChildProcess;
+  let formBase: string;
+
+  beforeAll(async () => {
+    const fixtures = fileURLToPath(new URL("../../../examples/fixtures/", import.meta.url));
+    const compiled = await compile({
+      spec: readFileSync(join(fixtures, "selftest-schema-features.yaml"), "utf8"),
+      manifest: readFileSync(join(fixtures, "selftest-schema-features.anvil.yaml"), "utf8"),
+      serviceId: "features",
+    });
+    formDir = mkdtempSync(join(tmpdir(), "anvil-mock-form-"));
+    writeBundle(formDir, generateBundle(compiled));
+    const started = await startMock(formDir);
+    formChild = started.child;
+    formBase = `http://127.0.0.1:${started.port}`;
+  }, 60_000);
+
+  afterAll(() => {
+    formChild?.kill("SIGKILL");
+    rmSync(formDir, { recursive: true, force: true });
+  });
+
+  const formCapture = async () => {
+    const res = await fetch(`${formBase}/__anvil/capture`);
+    const data = (await res.json()) as {
+      requests: Array<{
+        body: unknown;
+        contentType: string | null;
+        validation: { ok: boolean; missing: string[]; invalid: string[] };
+      }>;
+    };
+    return data.requests;
+  };
+
+  it("decodes a form body into fields, repeats as arrays, and validates required fields", async () => {
+    await fetch(`${formBase}/__anvil/reset`, { method: "POST" });
+    const res = await fetch(`${formBase}/forms`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams([
+        ["name", "ex"],
+        ["amount", "100"],
+        ["tags", "a"],
+        ["tags", "b"],
+        ["notify", "true"],
+      ]),
+    });
+    expect(res.status).toBe(201);
+    const [req] = await formCapture();
+    if (!req) throw new Error("mock server captured no request");
+    expect(req.validation).toEqual({ ok: true, missing: [], invalid: [] });
+    expect(req.body).toEqual({ name: "ex", amount: "100", tags: ["a", "b"], notify: "true" });
+    expect(req.contentType).toBe("application/x-www-form-urlencoded");
+  });
+
+  it("names a required form field that is missing instead of failing the JSON parse", async () => {
+    await fetch(`${formBase}/__anvil/reset`, { method: "POST" });
+    const res = await fetch(`${formBase}/forms`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body: new URLSearchParams({ name: "ex" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; missing: string[]; invalid: string[] };
+    };
+    expect(body.error.code).toBe("mock_validation_failed");
+    expect(body.error.missing).toEqual(["body.amount"]);
+    expect(body.error.invalid).toEqual([]);
+  });
+
+  it("falls back to the contract's content type when the request names none", async () => {
+    // `fetch` stamps text/plain on a string body, so send the raw request.
+    await fetch(`${formBase}/__anvil/reset`, { method: "POST" });
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = request(
+        `${formBase}/forms`,
+        { method: "POST", headers: { "content-length": "18" } },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode ?? 0));
+        },
+      );
+      req.on("error", reject);
+      req.end("name=ex&amount=100");
+    });
+    expect(status).toBe(201);
+    const [req] = await formCapture();
+    expect(req?.body).toEqual({ name: "ex", amount: "100" });
+  });
+
+  it("still parses a JSON body for a JSON contract", async () => {
+    await fetch(`${formBase}/__anvil/reset`, { method: "POST" });
+    const res = await fetch(`${formBase}/pages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "t", body: { representation: "storage", value: "v" } }),
+    });
+    expect(res.status).toBe(201);
+    const [req] = await formCapture();
+    expect(req?.body).toEqual({ title: "t", body: { representation: "storage", value: "v" } });
   });
 });

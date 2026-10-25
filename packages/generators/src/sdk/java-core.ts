@@ -216,7 +216,9 @@ package ${pkg};
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * One approved operation, as data. Generation only ever adds rows to the table
@@ -264,18 +266,44 @@ public final class OperationSpec {
     }
   }
 
+  /** How one form-body field goes on the wire, when the source declared it (OpenAPI encoding). */
+  public static final class FieldEncoding {
+    public final String field;
+    /** The query-parameter style; null means the form default. */
+    public final String style;
+    public final Boolean explode;
+
+    public FieldEncoding(String field, String style, Boolean explode) {
+      this.field = field;
+      this.style = style;
+      this.explode = explode;
+    }
+  }
+
   /** The request body as AIR preserved it. */
   public static final class Body {
     public final boolean required;
     public final String contentType;
     public final String projection;
     public final List<BodyField> fields;
+    /** Per-field wire encodings the source declared for a form body, by wire name. */
+    public final Map<String, FieldEncoding> encoding;
 
-    public Body(boolean required, String contentType, String projection, BodyField... fields) {
+    public Body(
+        boolean required,
+        String contentType,
+        String projection,
+        FieldEncoding[] encodings,
+        BodyField... fields) {
       this.required = required;
       this.contentType = contentType;
       this.projection = projection;
       this.fields = Collections.unmodifiableList(Arrays.asList(fields));
+      Map<String, FieldEncoding> byField = new LinkedHashMap<String, FieldEncoding>();
+      for (FieldEncoding encoding : encodings) {
+        byField.put(encoding.field, encoding);
+      }
+      this.encoding = Collections.unmodifiableMap(byField);
     }
   }
 

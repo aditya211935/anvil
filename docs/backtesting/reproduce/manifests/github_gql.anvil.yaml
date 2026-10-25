@@ -7,3 +7,9 @@ operations:
     state: approved
   repository:
     state: approved
+  # `Query.search(query: String!)` takes GitHub's search syntax — an unconstrained
+  # query language the compiler blocks as a passthrough, and one no `query_policy`
+  # dialect guards. Holding it blocked here is the reviewed decision; the field
+  # stays unexposed.
+  search:
+    state: blocked

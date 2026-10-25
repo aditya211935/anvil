@@ -8,8 +8,14 @@ service:
   display_name: Asana API
   owner: backtesting
   environment: prod
+# Asana accepts a personal access token (HTTP bearer) OR OAuth 2.0 authorization
+# code on every operation. The compiler does not pick between alternatives that
+# carry different authority, and the legacy scope-only `oauth2` names no grant,
+# so the choice is made here: the bearer token is the service credential an
+# agent holds. The scope is Asana's single default OAuth scope, kept so a
+# simulated principal is gated by it.
 auth:
-  type: oauth2
+  type: jwt_bearer
   scopes: ["default"]
 operations:
   getProjects: { state: approved }

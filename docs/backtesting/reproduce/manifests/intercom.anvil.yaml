@@ -27,10 +27,24 @@ operations:
     idempotency: { strategy: none }
     confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
     retries: { enabled: false }
+    params:
+      # The spec types the contact id as `format: uuid` with min/maxLength 24 —
+      # no string satisfies both, so every call would be refused before the wire.
+      # Intercom's own examples (`536e564f316c83104c000020`) are 24 hex digits:
+      # carry the id as exactly that.
+      "from.id": { type: string, pattern: "^[0-9a-f]{24}$" }
     state: approved
   retrieveConversation: { state: approved }
   replyConversation:
     idempotency: { strategy: none }
     confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
     retries: { enabled: false }
+    params:
+      # The reply body is oneOf[contact_reply_conversation_request,
+      # admin_reply_conversation_request] at its root. Both arrive as open
+      # objects, so every body matches both and a strict oneOf (the generated
+      # MCP server's zod shape) refuses all of them. An integration holds an app
+      # access token and replies on behalf of an admin, so narrow to the admin
+      # form. Tighten-only: the contact form is dropped, nothing new is admitted.
+      body: { one_of: admin_reply_conversation_request }
     state: approved

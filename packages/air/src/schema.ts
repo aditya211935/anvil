@@ -580,6 +580,21 @@ export type BodyField = z.infer<typeof BodyField>;
  * The CLI/MCP/skill all render from this one description — the surface shape
  * never mutates the canonical model.
  */
+/**
+ * How one top-level field of a form body is put on the wire, when the source
+ * declared it (OpenAPI's `encoding` map on a media type object). The semantics
+ * are the query-parameter table's — `style` and `explode` with OpenAPI's
+ * defaults — read by `serializeFormField` in param-style.ts. Carried only when
+ * declared: a field with no entry here keeps the default form encoding, under
+ * which a nested object has no representation and is refused rather than
+ * guessed at.
+ */
+export const BodyFieldEncoding = z.object({
+  style: ParamStyle.optional(),
+  explode: z.boolean().optional(),
+});
+export type BodyFieldEncoding = z.infer<typeof BodyFieldEncoding>;
+
 export const RequestBody = z.object({
   contentType: z.string().default("application/json"),
   required: z.boolean().default(false),
@@ -588,6 +603,13 @@ export const RequestBody = z.object({
   projection: z.enum(["fields", "whole"]).default("whole"),
   /** Top-level fields when `projection === "fields"`; empty for `whole`. */
   fields: z.array(BodyField).default([]),
+  /**
+   * Per-field wire encodings the source declared for a form body, keyed by
+   * the field's exact wire name (Stripe: `metadata` and `expand` as
+   * `deepObject`). Optional and never defaulted, so an AIR document from
+   * before the field hashes exactly as before.
+   */
+  encoding: z.record(z.string(), BodyFieldEncoding).optional(),
   /**
    * How the service matches the body's top-level field names. Absent: exactly,
    * as JSON does. `case_insensitive`: in any case, as Microsoft Graph binds an

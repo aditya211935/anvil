@@ -262,10 +262,24 @@ export function validate(operations: Operation[]): ValidationResult {
     // longer *unconstrained*. It still lands `review_required` (never auto-exposed)
     // unless a manifest `state` already moved it — the human decision remains.
     if (op.archetype === "query_passthrough" && !op.queryPolicy) {
+      // A manifest that explicitly holds the operation `blocked` IS the human
+      // decision this diagnostic asks for: the reviewer looked, and chose not to
+      // expose it (Jira's JQL and Xero's `where` are query languages no
+      // `query_policy` dialect can guard). The block stands either way — only
+      // the open question is closed, so the compile no longer fails on it.
+      // Read the manifest's recorded decision, not the state it left behind: a
+      // later pass (authorization-code auth re-deciding review_required) may
+      // have moved the state, but the block below re-asserts it either way.
+      const acknowledged = op.evidence.claims.some(
+        (claim) =>
+          claim.predicate === "state" && claim.value === "blocked" && claim.method === "manifest",
+      );
       flag(
-        "error",
+        acknowledged ? "warning" : "error",
         "query_language_passthrough",
-        `Operation '${op.id}' accepts unconstrained query-language injection; must be explicitly reviewed and approved.`,
+        acknowledged
+          ? `Operation '${op.id}' accepts unconstrained query-language injection; held blocked by the manifest's explicit decision and never exposed.`
+          : `Operation '${op.id}' accepts unconstrained query-language injection; must be explicitly reviewed and approved.`,
       );
       op.state = "blocked";
       notes.push(
