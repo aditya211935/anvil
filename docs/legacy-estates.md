@@ -210,6 +210,65 @@ Generic middleware tools discard the schema, effect, authorization, completion,
 and retry constraints that make a capability safe enough to review. They also
 give a harness more transport authority than the business operation requires.
 
+## Scaffold a contract from source
+
+Many legacy HTTP estates have handlers but no published contract: a JAX-RS
+resource, a Spring MVC controller, a servlet mapped in `web.xml`. `anvil
+legacy scaffold <dir>` recovers those endpoints and lowers them into an
+OpenAPI 3 draft that `anvil compile` reads like any other specification.
+
+```bash
+anvil legacy scaffold src/ --out generated/estate.openapi.json
+anvil compile generated/estate.openapi.json --out generated/estate
+anvil inspect generated/estate
+```
+
+The Java lane reads `.java` and `web.xml` members as inert text. It understands:
+
+- JAX-RS: class-level and method-level `@Path`, `@GET`/`@POST`/`@PUT`/
+  `@DELETE`/`@HEAD`/`@OPTIONS`/`@PATCH`, `@Consumes`/`@Produces` at class and
+  method level (the method wins), `@PathParam`/`@QueryParam`/`@HeaderParam`/
+  `@CookieParam`/`@FormParam` with `@DefaultValue`, the un-annotated
+  non-`@Context` parameter as the request entity, a `@BeanParam` whose class
+  is in the same source set, and `@ApplicationPath` on the `Application`
+  subclass as the base path. `{id: regex}` templates become `{id}`.
+- Spring MVC: `@RestController`/`@Controller` with `@RequestMapping` at class
+  and method level, `@GetMapping` and the other shorthands, `consumes`/
+  `produces`, `@PathVariable`/`@RequestParam`/`@RequestHeader`/`@CookieValue`
+  with `name`, `required` and `defaultValue`, `@RequestBody`, and
+  `ResponseEntity<T>` unwrapped to the declared body type. A
+  `@RequestMapping` that declares no HTTP method is recorded as an unmapped
+  path, one per declared path, never compiled as an operation.
+- `web.xml`: every `<servlet-mapping>` `<url-pattern>` as an unmapped path
+  with the servlet class as its handler. A JAX-RS container servlet (Jersey,
+  RESTEasy, CXF, or an `Application` init-param) supplies the JAX-RS base
+  path when no `@ApplicationPath` is declared; a `DispatcherServlet` mapping
+  supplies the Spring base path.
+
+Declared types project onto a small JSON Schema subset — `String` to string,
+`int`/`long` to integer with `int32`/`int64`, `BigDecimal` to number, `UUID`
+to a `uuid` string, `LocalDate` and `Date` to `date`/`date-time`,
+`List<T>`/`T[]` to arrays — and every schema records the declared Java type
+verbatim as `x-anvil-source-type`. An enum or a plain data class declared in
+the same source set is projected from its own declaration; anything else is
+an open object. Every operation, parameter and payload carries
+`x-anvil-evidence`: the file, 1-based line and construct (`@GET`, `@Path`,
+`servlet-mapping`) it was read from. `operationId` is
+`<SimpleClassName>.<methodName>`; an overload or a mapping with several
+routes takes a `_<n>` suffix by source order, with an info diagnostic.
+
+The boundary is deliberate. The lane is a bounded annotation recognizer, not
+a Java compiler: it resolves no imports, loads no classes, and evaluates no
+expression. A path written as a constant or a concatenation is reported
+(`legacy/scaffold/jaxrs/unresolvable_path_expression`) and skipped; a
+`${property}` placeholder is kept verbatim with a warning; a sub-resource
+locator's routes are not followed; an annotation whose arguments do not parse
+is reported, never guessed. Nothing in the draft carries a description, an
+example, or a success semantic the source did not declare, so reads compile
+as reads and every mutation lands `review_required`. Scaffolding approves
+nothing. The same input always yields the same draft and content hash,
+whatever order the members arrive in.
+
 ## Current product boundary
 
 Inventory, refinement, bridge-contract planning, and static driver-descriptor

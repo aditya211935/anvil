@@ -871,6 +871,19 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete deterministic inventory diff
 
+#### `anvil legacy scaffold`  *(mutates)*
+`anvil legacy scaffold [options] <source>`
+
+Draft an OpenAPI contract from legacy source that has none.
+
+Reads Java (JAX-RS, Spring MVC, web.xml) and .NET (ASP.NET attribute routing, ASMX) source as inert text and emits a deterministic OpenAPI 3 draft whose every operation records the source coordinates it was read from. The draft compiles through `anvil compile` like any specification; nothing in it carries business semantics the source did not declare, so mutations land review_required.
+
+Options:
+- `--title <title>` — info.title for the draft (default: source directory name)
+- `--lane <lane>` — scaffold lane (auto | java | dotnet)
+- `--out <file>` — write the OpenAPI draft (JSON) without overwriting different content
+- `--json` — emit the complete machine-readable report
+
 ### `anvil enrich-sources`
 `anvil enrich-sources [options] [command]`
 

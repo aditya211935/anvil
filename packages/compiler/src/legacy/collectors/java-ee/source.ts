@@ -7,7 +7,8 @@ interface SourceMember {
   platform: JavaEePlatform;
 }
 
-interface Annotation {
+/** One `@Name` or `@Name(...)` use read out of Java source, by UTF-16 offset. */
+export interface Annotation {
   name: string;
   simpleName: string;
   start: number;
@@ -258,7 +259,11 @@ function declarationsIn(source: string): TypeDeclaration[] {
   return declarations;
 }
 
-function scanAnnotations(source: string): Annotation[] {
+/**
+ * Every annotation use in a compilation unit, skipping comments and literals.
+ * Offsets index the original text, so callers may pair them with a masked copy.
+ */
+export function scanAnnotations(source: string): Annotation[] {
   const out: Annotation[] = [];
   let index = 0;
   let state: "code" | "line" | "block" | "string" | "char" | "text" = "code";
@@ -332,7 +337,7 @@ function scanAnnotations(source: string): Annotation[] {
   return out;
 }
 
-function readAnnotation(source: string, start: number): Annotation | undefined {
+export function readAnnotation(source: string, start: number): Annotation | undefined {
   const nameMatch = /^@([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/u.exec(source.slice(start));
   if (!nameMatch) return undefined;
   const name = nameMatch[1] as string;
@@ -372,8 +377,12 @@ function readAnnotation(source: string, start: number): Annotation | undefined {
   return { name, simpleName: name.split(".").at(-1) as string, start, end };
 }
 
-function maskCommentsAndLiterals(source: string): string {
-  const chars = [...source];
+/**
+ * Blank comments and literal contents to spaces, preserving length and line
+ * breaks so every offset into the result is an offset into the source.
+ */
+export function maskCommentsAndLiterals(source: string): string {
+  const chars = source.split("");
   let index = 0;
   let state: "code" | "line" | "block" | "string" | "char" | "text" = "code";
   while (index < chars.length) {
@@ -607,8 +616,9 @@ function onlyDeclarationPrefix(value: string): boolean {
   return !/[;{}]/u.test(value);
 }
 
-function maskAnnotationComments(source: string): string {
-  const chars = [...source];
+/** Blank comments inside one annotation body, keeping string literals intact. */
+export function maskAnnotationComments(source: string): string {
+  const chars = source.split("");
   let index = 0;
   let state: "code" | "line" | "block" | "string" | "char" | "text" = "code";
   while (index < chars.length) {
@@ -678,7 +688,8 @@ function maskAnnotationComments(source: string): string {
   return chars.join("");
 }
 
-function lineAt(source: string, index: number): number {
+/** 1-based line of a UTF-16 offset. */
+export function lineAt(source: string, index: number): number {
   return source.slice(0, index).split("\n").length;
 }
 

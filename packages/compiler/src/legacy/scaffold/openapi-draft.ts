@@ -134,7 +134,7 @@ function operationFor(endpoint: ScaffoldEndpoint & { method: ScaffoldHttpMethod 
       [SCAFFOLD_EVIDENCE_EXTENSION]: sortedEvidence(parameter.evidence),
     }));
   const pathParams = new Set(
-    [...endpoint.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1] ?? ""),
+    [...endpoint.path.matchAll(/(?<!\$)\{([^}]+)\}/g)].map((match) => match[1] ?? ""),
   );
   for (const name of [...pathParams].sort()) {
     if (!parameters.some((parameter) => parameter.in === "path" && parameter.name === name)) {
