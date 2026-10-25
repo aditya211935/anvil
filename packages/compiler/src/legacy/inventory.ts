@@ -4,7 +4,7 @@ import { z } from "zod";
 import { collectDatabaseLegacy } from "./collectors/database/index.js";
 import { collectDotnetLegacy } from "./collectors/dotnet/index.js";
 import { collectJavaEeLegacy } from "./collectors/java-ee/index.js";
-import { collectMainframeLegacy, collectMainframeLegacy } from "./collectors/mainframe/index.js";
+import { collectMainframeLegacy } from "./collectors/mainframe/index.js";
 import { collectMessagingLegacy } from "./collectors/messaging/index.js";
 import {
   createLegacyArtifact,
@@ -286,7 +286,7 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
       code: "legacy/inventory/no_applicable_collector",
       message: `No ${collector === "auto" ? "supported" : collector} declarative artifacts were found.`,
       remediation:
-        "Supply a hardened-expanded Java EE deployment, .NET configuration, supported messaging export, or stored-procedure DDL export.",
+        "Supply a hardened-expanded Java EE deployment, .NET configuration, supported messaging export, stored-procedure DDL export, or JCL/copybook export.",
     });
   }
 
@@ -530,17 +530,9 @@ function mainframeMemberLooksRelevant(member: LegacySourceMember): boolean {
   return /^\/\/[A-Z0-9@#$]{1,8}\s+(?:JOB|PROC)\b/im.test(textPrefix(member, 4096));
 }
 
-function mainframeMemberLooksRelevant(member: LegacySourceMember): boolean {
-  return /^\/\/[A-Z0-9@#$]{1,8}\s+(?:JOB|PROC)\b/im.test(textPrefix(member, 4096));
-}
-
 function artifactRole(path: string): LegacyArtifactRole {
   const lower = path.toLowerCase();
   if (/\.(?:dll|exe|jar|war|ear|rar)$/.test(lower)) return "application_binary";
-  if (/\.(?:cpy|cob|cbl|cpb)$/.test(lower)) return "schema";
-  if (/\.(?:jcl|proc|prc)$/.test(lower) || /(?:^|\/)(?:jcl|proclib)\//.test(lower)) {
-    return "runtime_configuration";
-  }
   if (/\.(?:cpy|cob|cbl|cpb)$/.test(lower)) return "schema";
   if (/\.(?:jcl|proc|prc)$/.test(lower) || /(?:^|\/)(?:jcl|proclib)\//.test(lower)) {
     return "runtime_configuration";
@@ -559,7 +551,6 @@ function mediaType(path: string): string {
   if (/\.ya?ml$/i.test(path)) return "application/yaml";
   if (/\.xml$|\.config$|\.xmi$/i.test(path)) return "application/xml";
   if (/\.dll$|\.exe$/i.test(path)) return "application/vnd.microsoft.portable-executable";
-  if (/\.(?:jcl|proc|prc|cpy|cob|cbl|cpb)$/i.test(path)) return "text/plain";
   if (/\.(?:jcl|proc|prc|cpy|cob|cbl|cpb)$/i.test(path)) return "text/plain";
   return "application/octet-stream";
 }

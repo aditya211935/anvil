@@ -703,16 +703,16 @@ Options:
 ### `anvil legacy`
 `anvil legacy [options] [command]`
 
-Inventory offline legacy application, messaging, and database evidence.
+Inventory offline legacy application, messaging, database, and batch evidence.
 
-Discover evidence-backed EJB, WCF, resource-adapter, messaging, and stored-procedure invocation candidates from caller-supplied offline exports. Collection never connects to a server, broker, or database, loads an assembly, executes bytecode or SQL, opens an archive, reads a queue, or invents business semantics.
+Discover evidence-backed EJB, WCF, resource-adapter, messaging, stored-procedure, and JCL batch-job invocation candidates from caller-supplied offline exports. Collection never connects to a server, broker, or database, loads an assembly, executes bytecode or SQL, opens an archive, reads a queue, submits a job, or invents business semantics.
 
 #### `anvil legacy inventory`  *(mutates)*
 `anvil legacy inventory [options] <source>`
 
 Build a content-addressed legacy estate inventory without invoking the estate.
 
-Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, supported broker or AsyncAPI exports, and PL/SQL or T-SQL stored-procedure DDL. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.
+Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, supported broker or AsyncAPI exports, PL/SQL or T-SQL stored-procedure DDL, and JCL job/procedure members with COBOL copybooks. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.
 
 Options:
 - `--environment <id>` — deployment environment coordinate
@@ -722,7 +722,7 @@ Options:
 - `--source-id <id>` — stable evidence-system id (default: <estate>:<environment>)
 - `--source-kind <kind>` — evidence authority (deployed_artifact | deployed_configuration | broker_configuration | artifact_repository | source_repository | runtime_observation | operator_attestation | service_catalog | documentation | naming_inference)
 - `--revision <revision>` — immutable source revision or export digest label
-- `--collector <collector>` — collector lane (auto | java-ee | dotnet | messaging | database)
+- `--collector <collector>` — collector lane (auto | java-ee | dotnet | messaging | database | mainframe)
 - `--out <file>` — write the complete report without overwriting different content
 - `--check` — exit non-zero when any candidate contains a conflict
 - `--json` — emit the complete machine-readable report
@@ -926,6 +926,25 @@ Options:
 - `--format <format>` — output format for --out and the terminal: json | md
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete scorecard report as JSON
+
+#### `anvil legacy schema`
+`anvil legacy schema [options] [command]`
+
+Convert legacy record layouts into JSON Schema without inferring meaning.
+
+Projects a declared record layout into a draft-07 JSON Schema. Field names stay verbatim, every field records its source declaration and byte offset, and nothing about business meaning is inferred.
+
+##### `anvil legacy schema copybook`  *(mutates)*
+`anvil legacy schema copybook [options] <file>`
+
+Convert one COBOL copybook into a JSON Schema with byte offsets.
+
+Reads one regular copybook file as inert text (fixed columns 8-72, or free format when no sequence area is detected). Level numbers, PICTURE, USAGE, OCCURS, REDEFINES, 88-level conditions, and FILLER become a draft-07 JSON Schema whose fields keep their COBOL names and carry their declaration under x-anvil-cobol. COPY statements are reported, never followed.
+
+Options:
+- `--format <format>` — source format: auto | fixed | free
+- `--out <file>` — write the JSON Schema document without overwriting different content
+- `--json` — emit the complete machine-readable report
 
 ### `anvil enrich-sources`
 `anvil enrich-sources [options] [command]`

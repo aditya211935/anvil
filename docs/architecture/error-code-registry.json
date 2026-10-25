@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 462,
-  "asserted": 329,
-  "unasserted": 133,
+  "total": 486,
+  "asserted": 346,
+  "unasserted": 140,
   "codes": {
     "air/incompatible_version": {
       "packages": [
@@ -542,6 +542,48 @@
     "console/unsupported_media_type": {
       "packages": [
         "console"
+      ],
+      "asserted": true
+    },
+    "database/multiple_signatures": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/no_procedure_ddl": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/oversized_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/package_body_without_specification": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/result_set_unproven": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "database/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "database/tsql_function_unsupported": {
+      "packages": [
+        "compiler"
       ],
       "asserted": true
     },
@@ -1736,6 +1778,30 @@
       ],
       "asserted": false
     },
+    "legacy/schema_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/schema_source_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/schema_source_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/schema_source_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "legacy/scorecard_binding_limit": {
       "packages": [
         "cli"
@@ -1819,6 +1885,84 @@
         "cli"
       ],
       "asserted": true
+    },
+    "mainframe/column_overflow": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/copybook_recorded": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/implicit_procedure": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/include_not_followed": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/no_discoverable_job": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/non_utf8_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/secret_like_value": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mainframe/too_many_statements": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mainframe/too_many_steps": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mainframe/unexpected_data_record": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mainframe/unknown_statement": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mainframe/unterminated_continuation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
     },
     "manifest/invalid": {
       "packages": [
