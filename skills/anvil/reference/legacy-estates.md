@@ -1,6 +1,6 @@
 ---
 name: anvil-legacy-estates
-description: Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, and messaging estates before proposing any runtime bridge or business-shaped MCP tool.
+description: Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, messaging, stored-procedure DDL, and JCL batch estates before proposing any runtime bridge or business-shaped MCP tool.
 ---
 
 # Inventory a legacy estate before building a bridge
@@ -17,8 +17,8 @@ anvil legacy inventory <offline-export> \
 ```
 
 The default `auto` lane runs only applicable offline collectors. Select
-`--collector java-ee`, `dotnet`, or `messaging` when a collection is
-intentionally limited to one vocabulary. Use `--source-kind` and `--source-id`
+`--collector java-ee`, `dotnet`, `messaging`, `database`, or `mainframe` when a
+collection is intentionally limited to one vocabulary. Use `--source-kind` and `--source-id`
 to preserve where the evidence came from; use `--check` when CI must stop on
 unresolved conflicts.
 
@@ -56,7 +56,13 @@ when Anvil should enforce the bounded, no-symlink filesystem boundary.
   configuration; DLL and EXE files are digest-only; and
 - AsyncAPI, IBM MQ MQSC/CCDT, Artemis, allowlisted RabbitMQ topology, Kafka
   Admin and Schema Registry shapes, and Strimzi `KafkaTopic` and
-  `KafkaConnector` resources.
+  `KafkaConnector` resources; and
+- JCL job and procedure members read as inert text (steps, `DISP`-declared
+  datasets, `COND`/`IF` thresholds) with COBOL copybooks recorded as schema
+  artifacts; in-stream data is never copied, and `PASSWORD=` members are
+  refused. `anvil legacy schema copybook <file>` turns one copybook into a
+  JSON Schema whose field names stay verbatim and whose fields record their
+  COBOL declaration, offset, and byte length under `x-anvil-cobol`.
 
 Supply regular files or an already hardened-expanded directory. The CLI refuses
 symbolic links and never opens an EAR, WAR, RAR, ZIP, or other nested archive.
@@ -103,12 +109,25 @@ anvil legacy gaps legacy.inventory.json \
   --plan collection-plan.addressed.json --check --out legacy.gaps.json
 anvil legacy explain legacy.inventory.json <lc_candidate_id> --out explanation.json
 anvil legacy diff previous.inventory.json legacy.inventory.json --out inventory.diff.json
+anvil legacy merge prod.inventory.json uat.inventory.json --out estate.inventory.json
+anvil legacy scorecard legacy.inventory.json --bindings reviewed-bindings/ \
+  --format md --out legacy.scorecard.md
 ```
 
 `graph` projects typed evidence links. `gaps` measures semantic completeness
 independently of collector yield. `explain` traces one candidate to its claims
 and artifacts. `diff` separates logical-lineage changes from deployment
-occurrence changes.
+occurrence changes. `merge` unions several exports of one estate (environments,
+applications, source plus deployed configuration) into one verified inventory
+report that every other command accepts; it keeps every value, and marks each
+logical capability whose deployments disagree with a
+`legacy/merge/cross_source_disagreement` warning (`--check` fails on it).
+
+Likewise, `scorecard` counts candidates, conflicts, unknown claim
+dimensions, reviewed bindings, and the bindings whose transport shape the queue
+bridge can conformance-test (`executable_shape`) versus those still needing an
+adapter family; it exits 0 whenever its inputs verify and never proposes an
+approval or calls a capability ready.
 
 The safe progression is:
 
@@ -203,10 +222,35 @@ not earned by the same reviewed capability — editing the JSON cannot start
 it. Broker credentials come from those two environment variable names only
 and are never printed. It binds 127.0.0.1; `--host` serves another address
 with a warning. It prints `{ url, port }` under `--json`, serves
-`POST /invoke` and `GET /readyz`, and stops on SIGTERM. Serving is the
-first live connection in this workflow, and it proves nothing conformance
-did not: the broker, destination, and identity are still the plan's
-unverified live facts until the deployment observes them.
+`POST /invoke`, `POST /invoke/<operation name>` (the route a lowered bundle
+addresses; another operation's name is refused with 404, never forwarded),
+and `GET /readyz`, and stops on SIGTERM. Serving is the first live
+connection in this workflow, and it proves nothing conformance did not: the
+broker, destination, and identity are still the plan's unverified live facts
+until the deployment observes them.
+
+Give the reviewed binding the same CLI + MCP + skill triad as every other
+operation by lowering it into inputs `anvil compile` already understands:
+
+```bash
+anvil legacy bridge lower bindings/ --title "Legacy estate" --service-id legacy \
+  --out-spec legacy.openapi.json --out-manifest legacy.anvil.yaml
+anvil compile legacy.openapi.json --manifest legacy.anvil.yaml --out legacy-bundle
+anvil inspect legacy-bundle
+```
+
+`lower` accepts bindings of every transport family and never enables
+execution. One OpenAPI operation per binding at `POST /invoke/<operation
+name>` carrying the queue wire binding by content hash; a binding still
+`not_implemented`, or one the queue bridge cannot execute (any other
+transport kind, reply mode `none`/`poll_status`, a non-JSON payload), is
+held `state: blocked` and listed in the report's `refused[]`; a
+`conformance_passed` binding gets no manifest state at all — the compiler
+classifies it and `anvil approve` after `anvil inspect` remains the only
+way to approve. Reviewed retry and idempotency semantics are carried only
+where they tighten. The compiled operation still refuses to execute until an
+operator declares a protocol facade pointing `ANVIL_BASE_URL` at `serve`
+for that same binding.
 
 The honest limits: one protocol client (a zero-dependency STOMP 1.2 client
 over `node:net`, chosen — and documented in its own file header — as the

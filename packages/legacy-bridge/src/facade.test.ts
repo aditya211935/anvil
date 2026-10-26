@@ -3,7 +3,11 @@ import { createServer, type OutgoingHttpHeaders, request } from "node:http";
 import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { InProcessBrokerDouble } from "./broker-double.js";
-import { createLegacyBridgeFacade, type LegacyBridgeTelemetryRecord } from "./facade.js";
+import {
+  createLegacyBridgeFacade,
+  type LegacyBridgeTelemetryRecord,
+  legacyBridgeInvokePath,
+} from "./facade.js";
 import { fixtureLegacyCapabilityBinding } from "./test-fixtures.js";
 import { buildQueueWireBinding, LegacyBridgeShapeError } from "./wire-binding.js";
 
@@ -123,6 +127,25 @@ describe("createLegacyBridgeFacade", () => {
     expect(missing.status).toBe(404);
     const wrongMethod = await fetch(`${baseUrl}/invoke`, { method: "GET" });
     expect(wrongMethod.status).toBe(405);
+  });
+
+  it("serves the operation-addressed route a lowered bundle declares, and refuses another operation's by name", async () => {
+    const double = new InProcessBrokerDouble((body) => body);
+    const baseUrl = await boot(double);
+    const own = legacyBridgeInvokePath(fixtureLegacyCapabilityBinding().operation.name);
+    expect(own).toBe("/invoke/refunds.submit_refund");
+    const served = await fetch(`${baseUrl}${own}`, { method: "POST", body: '{"refundId":"r-2"}' });
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe('{"refundId":"r-2"}');
+    expect(double.sendAttempts).toBe(1);
+    // A request the bundle addressed to a different binding never reaches this
+    // binding's queue — refused by name rather than misrouted.
+    const other = await fetch(`${baseUrl}${legacyBridgeInvokePath("ledger.read_balance")}`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(other.status).toBe(404);
+    expect(double.sendAttempts).toBe(1);
   });
 
   it("maps a broker timeout to a structured, non-retryable 504", async () => {

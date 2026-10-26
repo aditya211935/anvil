@@ -26,7 +26,8 @@ import {
 import { childText, parseSafeDescriptorXml } from "./xml.js";
 
 const DEFAULT_MAX_MEMBERS = 10_000;
-const DEFAULT_MAX_MEMBER_BYTES = 8 * 1024 * 1024;
+/** The largest single member any Java-source lane inspects as text. */
+export const DEFAULT_MAX_MEMBER_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const MAX_PATH_BYTES = 4096;
 

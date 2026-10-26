@@ -106,6 +106,10 @@ export default defineConfig({
           label: "Legacy systems",
           items: [
             { label: "Understand legacy estates", slug: "concepts/legacy-estates" },
+            {
+              label: "Modernization playbook",
+              slug: "guides/legacy-modernization-playbook",
+            },
             { label: "Plan and inventory", slug: "guides/legacy-inventory" },
             { label: "Refine one candidate", slug: "guides/legacy-refinement" },
             { label: "Use the TypeScript SDK", slug: "guides/legacy-sdk" },

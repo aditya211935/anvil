@@ -1,4 +1,5 @@
 import { hashCanonical } from "@anvil/air";
+import type { DatabaseDiagnostic } from "./collectors/database/index.js";
 import type { DotnetDiagnostic, DotnetObservation } from "./collectors/dotnet/index.js";
 import type { JavaEeDiagnostic, JavaEeObservation } from "./collectors/java-ee/index.js";
 import type {
@@ -289,7 +290,7 @@ export function normalizeMessagingObservation(
 
 export function addNoInvocationDiagnostic(
   state: NormalizationState,
-  collectorId: "java-ee" | "dotnet" | "messaging",
+  collectorId: "java-ee" | "dotnet" | "messaging" | "database",
   rawObservations: number,
   normalizedObservations: number,
   collectorDiagnostics: readonly { level: "info" | "warning" | "error" }[],
@@ -322,22 +323,32 @@ export function addNoInvocationDiagnostic(
               "Supply an explicit endpoint contract or bounded static contract metadata; hosting identity alone is insufficient.",
             collectorId,
           }
-        : {
-            level: "warning",
-            code: "legacy/messaging/no_invocation_candidate",
-            message:
-              "Messaging metadata was retained as evidence, but none proved a destination or message operation.",
-            remediation:
-              "Supply a topic, queue, routing, producer/consumer operation, or a separate binding that links schema metadata to one.",
-            collectorId,
-          };
+        : collectorId === "database"
+          ? {
+              level: "warning",
+              code: "legacy/database/no_invocation_candidate",
+              message:
+                "Stored-procedure DDL was retained as evidence, but none proved a callable procedure or function.",
+              remediation:
+                "Supply the package specification or procedure DDL that declares the callable signature.",
+              collectorId,
+            }
+          : {
+              level: "warning",
+              code: "legacy/messaging/no_invocation_candidate",
+              message:
+                "Messaging metadata was retained as evidence, but none proved a destination or message operation.",
+              remediation:
+                "Supply a topic, queue, routing, producer/consumer operation, or a separate binding that links schema metadata to one.",
+              collectorId,
+            };
   state.diagnostics.push(diagnostic);
 }
 
 export function normalizeDiagnostic(
   state: NormalizationState,
   collectorId: string,
-  diagnostic: JavaEeDiagnostic | DotnetDiagnostic | MessagingDiagnostic,
+  diagnostic: JavaEeDiagnostic | DotnetDiagnostic | MessagingDiagnostic | DatabaseDiagnostic,
 ): LegacyCollectorDiagnostic {
   const rawCoordinate =
     "path" in (diagnostic.coordinate ?? {})
@@ -360,7 +371,7 @@ export function normalizeDiagnostic(
   };
 }
 
-function emitObservation(
+export function emitObservation(
   state: NormalizationState,
   input: {
     collectorId: string;
@@ -389,7 +400,7 @@ function emitObservation(
   );
 }
 
-function evidenceFor(
+export function evidenceFor(
   state: NormalizationState,
   collectorId: string,
   coordinates: readonly EvidenceCoordinate[],
@@ -417,7 +428,7 @@ function evidenceFor(
   return [...new Set(evidenceIds)].sort();
 }
 
-function technicalClaims(
+export function technicalClaims(
   name: string,
   evidenceIds: string[],
   basis: LegacyEvidenceBasis,
@@ -471,7 +482,7 @@ function addErrorClaim(
   if (value) claims.push(claim("error_semantics", bounded(value, 2048), evidenceIds, "configured"));
 }
 
-function claim(
+export function claim(
   dimension: LegacyClaim["dimension"],
   value: LegacyClaim["value"],
   evidenceIds: string[],
@@ -514,7 +525,7 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function stringArray(value: unknown): string[] {
+export function stringArray(value: unknown): string[] {
   const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   return [
     ...new Set(
@@ -525,7 +536,7 @@ function stringArray(value: unknown): string[] {
   ].sort();
 }
 
-function bounded(value: string, max: number): string {
+export function bounded(value: string, max: number): string {
   let printable = "";
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;

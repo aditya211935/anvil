@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { hashCanonical } from "@anvil/air";
 import { z } from "zod";
+import { collectDatabaseLegacy } from "./collectors/database/index.js";
 import { collectDotnetLegacy } from "./collectors/dotnet/index.js";
 import { collectJavaEeLegacy } from "./collectors/java-ee/index.js";
+import { collectMainframeLegacy } from "./collectors/mainframe/index.js";
 import { collectMessagingLegacy } from "./collectors/messaging/index.js";
 import {
   createLegacyArtifact,
@@ -24,8 +26,20 @@ import {
   normalizeJavaObservation,
   normalizeMessagingObservation,
 } from "./normalization.js";
+import { normalizeDatabaseObservation } from "./normalization-database.js";
+import {
+  addMainframeNoInvocationDiagnostic,
+  normalizeMainframeObservation,
+} from "./normalization-mainframe.js";
 
-export const LegacyCollectorKind = z.enum(["auto", "java-ee", "dotnet", "messaging"]);
+export const LegacyCollectorKind = z.enum([
+  "auto",
+  "java-ee",
+  "dotnet",
+  "messaging",
+  "database",
+  "mainframe",
+]);
 export type LegacyCollectorKind = z.infer<typeof LegacyCollectorKind>;
 
 export interface LegacySourceMember {
@@ -64,7 +78,8 @@ export type CollectLegacyInventoryStreamInput = Omit<CollectLegacyInventoryInput
 };
 
 export interface LegacyCollectorRun {
-  collector: Exclude<LegacyCollectorKind, "auto">;
+  /** A built-in lane, or the id of a registered V2 collector (see `registry.ts`). */
+  collector: string;
   inputMembers: number;
   observations: number;
   diagnostics: number;
@@ -94,11 +109,7 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
   const systemId = LegacyIdentifier.parse(input.source.systemId);
   const collector = LegacyCollectorKind.parse(input.collector ?? "auto");
   const members = normalizeMembers(input.members);
-  const deploymentDigest = sha256(
-    hashCanonical(
-      members.map((member) => ({ path: member.path, digest: sha256Bytes(member.bytes) })),
-    ),
-  );
+  const deploymentDigest = legacyDeploymentDigest(members);
   const artifacts = members.map((member) => {
     const memberSource = member.source
       ? {
@@ -215,13 +226,67 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
     }
   }
 
+  if (collector === "auto" || collector === "database") {
+    const selected = selectDatabaseMembers(members);
+    if (selected.length > 0) {
+      const diagnosticsBefore = state.diagnostics.length;
+      const result = collectDatabaseLegacy(selected);
+      const normalizedBefore = state.observations.length;
+      for (const observation of result.observations)
+        normalizeDatabaseObservation(state, observation);
+      for (const diagnostic of result.diagnostics) {
+        state.diagnostics.push(normalizeDiagnostic(state, "database", diagnostic));
+      }
+      addNoInvocationDiagnostic(
+        state,
+        "database",
+        result.observations.length,
+        state.observations.length - normalizedBefore,
+        result.diagnostics,
+      );
+      collectors.push({
+        collector: "database",
+        inputMembers: selected.length,
+        observations: state.observations.length - normalizedBefore,
+        diagnostics: state.diagnostics.length - diagnosticsBefore,
+      });
+    }
+  }
+
+  if (collector === "auto" || collector === "mainframe") {
+    const selected = selectMainframeMembers(members, collector === "mainframe");
+    if (selected.length > 0) {
+      const diagnosticsBefore = state.diagnostics.length;
+      const result = collectMainframeLegacy(selected);
+      const normalizedBefore = state.observations.length;
+      for (const observation of result.observations) {
+        normalizeMainframeObservation(state, observation);
+      }
+      for (const diagnostic of result.diagnostics) {
+        state.diagnostics.push(normalizeDiagnostic(state, "mainframe", diagnostic));
+      }
+      addMainframeNoInvocationDiagnostic(
+        state,
+        result.observations.length,
+        state.observations.length - normalizedBefore,
+        result.diagnostics,
+      );
+      collectors.push({
+        collector: "mainframe",
+        inputMembers: selected.length,
+        observations: state.observations.length - normalizedBefore,
+        diagnostics: state.diagnostics.length - diagnosticsBefore,
+      });
+    }
+  }
+
   if (collectors.length === 0) {
     state.diagnostics.push({
       level: "warning",
       code: "legacy/inventory/no_applicable_collector",
       message: `No ${collector === "auto" ? "supported" : collector} declarative artifacts were found.`,
       remediation:
-        "Supply a hardened-expanded Java EE deployment, .NET configuration, or supported messaging export.",
+        "Supply a hardened-expanded Java EE deployment, .NET configuration, supported messaging export, stored-procedure DDL export, or JCL/copybook export.",
     });
   }
 
@@ -280,6 +345,24 @@ export async function collectLegacyInventoryStream(
   }
   const { limits: _limits, members: _stream, ...compileInput } = input;
   return collectLegacyInventory({ ...compileInput, members });
+}
+
+/**
+ * The deployment digest every observation in one inventory shares: a hash of
+ * the exact member paths and bytes that were inspected, independent of the
+ * order a caller supplied them in. Exported so a collector run outside the
+ * built-in lanes (see `registry.ts`) can address the same coordinate.
+ */
+export function legacyDeploymentDigest(
+  members: readonly { path: string; bytes: Uint8Array }[],
+): `sha256:${string}` {
+  return sha256(
+    hashCanonical(
+      [...members]
+        .sort((left, right) => left.path.localeCompare(right.path))
+        .map((member) => ({ path: member.path, digest: sha256Bytes(member.bytes) })),
+    ),
+  );
 }
 
 function normalizeMembers(input: readonly LegacySourceMember[]): LegacySourceMember[] {
@@ -363,6 +446,41 @@ function selectMessagingMembers(
     .map(({ path, bytes }) => ({ path, bytes }));
 }
 
+const DATABASE_DDL_PATH = /\.(?:sql|ddl|pls|plb|pks|pkb|prc|spc|bdy|tsql)$/i;
+
+function selectDatabaseMembers(
+  members: readonly LegacySourceMember[],
+): { path: string; bytes: Uint8Array }[] {
+  return members
+    .filter((member) => DATABASE_DDL_PATH.test(member.path))
+    .map(({ path, bytes }) => ({ path, bytes }));
+}
+
+/**
+ * JCL and procedure members by extension or by a `JCL/` / `PROCLIB/` directory,
+ * plus COBOL copybooks as schema artifacts. In `auto` mode an unrecognized
+ * text member still qualifies when it begins with a JOB or PROC card.
+ */
+function selectMainframeMembers(
+  members: readonly LegacySourceMember[],
+  explicit: boolean,
+): { path: string; bytes: Uint8Array }[] {
+  return members
+    .filter((member) => {
+      if (/\.(?:jcl|proc|prc|cpy|cob|cbl|cpb)$/i.test(member.path)) return true;
+      if (/(?:^|\/)(?:jcl|proclib|copylib|copybooks?)\//i.test(member.path)) return true;
+      if (
+        /\.(?:xml|xmi|json|ya?ml|config|dll|exe|svc|jar|war|ear|rar|class|java|mqsc|sql|ddl|pls|plb|pks|pkb|prc|spc|bdy|tsql)$/i.test(
+          member.path,
+        )
+      ) {
+        return false;
+      }
+      return explicit || mainframeMemberLooksRelevant(member);
+    })
+    .map(({ path, bytes }) => ({ path, bytes }));
+}
+
 function textPrefix(member: LegacySourceMember, maxBytes = 128 * 1024): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(member.bytes.subarray(0, maxBytes));
@@ -408,10 +526,19 @@ function messagingMemberLooksRelevant(member: LegacySourceMember): boolean {
   );
 }
 
+function mainframeMemberLooksRelevant(member: LegacySourceMember): boolean {
+  return /^\/\/[A-Z0-9@#$]{1,8}\s+(?:JOB|PROC)\b/im.test(textPrefix(member, 4096));
+}
+
 function artifactRole(path: string): LegacyArtifactRole {
   const lower = path.toLowerCase();
   if (/\.(?:dll|exe|jar|war|ear|rar)$/.test(lower)) return "application_binary";
+  if (/\.(?:cpy|cob|cbl|cpb)$/.test(lower)) return "schema";
+  if (/\.(?:jcl|proc|prc)$/.test(lower) || /(?:^|\/)(?:jcl|proclib)\//.test(lower)) {
+    return "runtime_configuration";
+  }
   if (/(?:application|web|ejb-jar|ra)\.xml$/.test(lower)) return "deployment_descriptor";
+  if (DATABASE_DDL_PATH.test(lower)) return "schema";
   if (/asyncapi|schema|avro|\.proto$|\.xsd$/.test(lower)) return "schema";
   if (/mqsc|ccdt|artemis|rabbit|kafka|broker/.test(lower)) return "broker_export";
   if (/\.config$|\.xml$|\.json$|\.ya?ml$/.test(lower)) return "runtime_configuration";
@@ -420,9 +547,11 @@ function artifactRole(path: string): LegacyArtifactRole {
 
 function mediaType(path: string): string {
   if (/\.json$/i.test(path)) return "application/json";
+  if (DATABASE_DDL_PATH.test(path)) return "application/sql";
   if (/\.ya?ml$/i.test(path)) return "application/yaml";
   if (/\.xml$|\.config$|\.xmi$/i.test(path)) return "application/xml";
   if (/\.dll$|\.exe$/i.test(path)) return "application/vnd.microsoft.portable-executable";
+  if (/\.(?:jcl|proc|prc|cpy|cob|cbl|cpb)$/i.test(path)) return "text/plain";
   return "application/octet-stream";
 }
 

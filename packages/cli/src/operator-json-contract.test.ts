@@ -529,6 +529,10 @@ describe("legacy product commands keep the operator JSON contract", () => {
   it.each([
     ["legacy bridge plan", ["legacy", "bridge", "plan", "missing-decision.json", "--json"]],
     [
+      "legacy bridge lower",
+      ["legacy", "bridge", "lower", "missing-binding.json", "--title", "t", "--json"],
+    ],
+    [
       "legacy bridge conformance",
       [
         "legacy",
@@ -562,6 +566,10 @@ describe("legacy product commands keep the operator JSON contract", () => {
       ["legacy", "explain", "missing-inventory.json", `lc_${"0".repeat(64)}`, "--json"],
     ],
     ["legacy diff", ["legacy", "diff", "missing-before.json", "missing-after.json", "--json"]],
+    ["legacy merge", ["legacy", "merge", "missing-prod.json", "missing-uat.json", "--json"]],
+    ["legacy scaffold", ["legacy", "scaffold", "missing-source-dir", "--json"]],
+    ["legacy schema copybook", ["legacy", "schema", "copybook", "missing.cpy", "--json"]],
+    ["legacy scorecard", ["legacy", "scorecard", "missing-inventory.json", "--json"]],
   ] as const)("%s emits one structured refusal document", async (label, argv) => {
     const result = await run([...argv]);
     const envelope = expectRefusalContract(result, label);

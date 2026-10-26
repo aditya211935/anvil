@@ -96,6 +96,12 @@ const PAGES = [
   { src: "docs/legacy-inventory.md", dest: "guides/legacy-inventory.md", order: 8 },
   { src: "docs/legacy-refinement.md", dest: "guides/legacy-refinement.md", order: 9 },
   { src: "docs/legacy-sdk.md", dest: "guides/legacy-sdk.md", order: 10 },
+  {
+    src: "docs/legacy-modernization-playbook.md",
+    dest: "guides/legacy-modernization-playbook.md",
+    order: 10,
+  },
+  { src: "docs/legacy-scorecard.md", dest: "guides/legacy-scorecard.md", order: 10 },
   { src: "docs/SOURCE_FORMATS.md", dest: "guides/source-formats.md", order: 11 },
   { src: "docs/CI.md", dest: "guides/ci.md", order: 12 },
   { src: "docs/TROUBLESHOOTING.md", dest: "guides/troubleshooting.md", order: 13 },

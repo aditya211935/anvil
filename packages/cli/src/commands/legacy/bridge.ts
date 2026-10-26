@@ -16,6 +16,7 @@ import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
+import { registerLegacyBridgeLower } from "./bridge-lower.js";
 import { registerLegacyBridgeServe } from "./bridge-serve.js";
 
 const REPORT_TYPE = "anvil.legacy-bridge-plan";
@@ -110,6 +111,7 @@ export function registerLegacyBridge(parent: Command, ctx: CommandContext): void
   );
 
   registerLegacyBridgeServe(bridge, ctx);
+  registerLegacyBridgeLower(bridge, ctx);
 }
 
 function runBridgePlan(decisionPath: string, options: BridgePlanOptions, io: CliIO): number {
@@ -255,7 +257,7 @@ export function readJson(path: string): unknown {
   }
 }
 
-function writeReport(path: string, content: string): void {
+export function writeReport(path: string, content: string): void {
   const target = resolve(path);
   if (existsSync(target)) {
     if (readFileSync(target, "utf8") === content) return;

@@ -1,8 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { finalizeLegacyCapabilityBindingRecord } from "@anvil/compiler/legacy";
+import { compile } from "@anvil/compiler";
+import {
+  finalizeLegacyCapabilityBindingRecord,
+  promoteLegacyCapabilityBindingToConformancePassed,
+} from "@anvil/compiler/legacy";
+import { generateSkill } from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
 
@@ -232,5 +238,156 @@ describe("anvil legacy bridge conformance", () => {
     );
     expect(result.code).toBe(1);
     expect(JSON.parse(result.out).code).toBe("legacy/bridge_plan_missing");
+  });
+});
+
+describe("anvil legacy bridge lower", () => {
+  function writePromotedBinding(dir: string): string {
+    const promoted = promoteLegacyCapabilityBindingToConformancePassed(
+      JSON.parse(readFileSync(writeRequestReplyBinding(), "utf8")),
+      `sha256:${"b".repeat(64)}`,
+    );
+    const { bindingId: _bindingId, contentHash: _contentHash, ...core } = promoted;
+    const renamed = finalizeLegacyCapabilityBindingRecord({
+      ...core,
+      operation: { ...core.operation, name: "ledger.read_balance", effect: "read" },
+    });
+    const path = join(dir, "ledger.read_balance.json");
+    writeFileSync(path, `${JSON.stringify(renamed)}\n`);
+    return path;
+  }
+
+  it("lowers a directory of bindings into a spec and manifest that compile into the triad", async () => {
+    const dir = join(work, "bindings");
+    mkdirSync(dir);
+    writePromotedBinding(dir);
+    // The fire-and-forget binding (reply mode none) is not executable by the
+    // queue bridge; it is still emitted, blocked, so the estate stays visible.
+    writeFileSync(join(dir, "produce-only.json"), readFileSync(writeBinding(), "utf8"));
+    const spec = join(work, "out", "legacy.openapi.json");
+    const manifest = join(work, "out", "legacy.anvil.yaml");
+    const args = [
+      "legacy",
+      "bridge",
+      "lower",
+      dir,
+      "--title",
+      "Legacy estate",
+      "--service-id",
+      "legacy",
+      "--out-spec",
+      spec,
+      "--out-manifest",
+      manifest,
+      "--json",
+    ];
+    const first = await anvil(...args);
+    expect(first.code, first.err).toBe(0);
+    const report = JSON.parse(first.out);
+    expect(report).toMatchObject({
+      reportType: "anvil.legacy-bridge-lower",
+      lowered: [
+        {
+          operationName: "ledger.read_balance",
+          executable: true,
+          runtimeStatus: "conformance_passed",
+        },
+        { operationName: "refunds.submit_refund", executable: false, manifestState: "blocked" },
+      ],
+      refused: [{ operationName: "refunds.submit_refund", emitted: true }],
+    });
+    // Deterministic, and the no-overwrite write accepts identical content.
+    const second = await anvil(...args);
+    expect(second).toEqual(first);
+
+    const openapi = JSON.parse(readFileSync(spec, "utf8"));
+    expect(openapi).toEqual(report.openapi);
+    const manifestDoc = parseYaml(readFileSync(manifest, "utf8"));
+    expect(manifestDoc).toEqual(report.manifest);
+    expect(manifestDoc.operations["refunds.submit_refund"].state).toBe("blocked");
+    expect(manifestDoc.operations["ledger.read_balance"].state).toBeUndefined();
+
+    const air = await compile({
+      spec: readFileSync(spec, "utf8"),
+      manifest: readFileSync(manifest, "utf8"),
+      serviceId: "legacy",
+    });
+    const read = air.operations.find((op) => op.sourceRef.operationId === "ledger.read_balance");
+    const submit = air.operations.find(
+      (op) => op.sourceRef.operationId === "refunds.submit_refund",
+    );
+    expect(read?.sourceRef.binding?.protocol).toBe("queue_request_reply");
+    expect(read?.state).not.toBe("blocked");
+    expect(submit?.state).toBe("blocked");
+    expect(submit?.sourceRef.binding).toBeUndefined();
+    expect(air.operations.some((op) => op.state === "approved")).toBe(false);
+    // The skill surface lists every lowered operation in its catalog as pending
+    // (not callable) — visible on the surface, with its state beside it.
+    const catalog = generateSkill(air)["reference/operations.md"] ?? "";
+    expect(catalog).toContain(`\`${read?.cli.command}\``);
+    expect(catalog).toContain(`\`${submit?.cli.command}\` — Submit a refund [blocked]`);
+    expect(catalog).not.toContain("## Approved operations");
+  });
+
+  it("refuses to overwrite a different manifest, a tampered binding, and two reviews of one name", async () => {
+    const binding = writeRequestReplyBinding();
+    const manifest = join(work, "anvil.yaml");
+    writeFileSync(manifest, "operations: {}\n");
+    const clash = await anvil(
+      "legacy",
+      "bridge",
+      "lower",
+      binding,
+      "--title",
+      "Legacy estate",
+      "--out-manifest",
+      manifest,
+      "--json",
+    );
+    expect(clash.code).toBe(1);
+    expect(JSON.parse(clash.out).code).toBe("legacy/bridge_output_exists");
+    expect(readFileSync(manifest, "utf8")).toBe("operations: {}\n");
+
+    const tampered = join(work, "tampered.json");
+    const record = JSON.parse(readFileSync(binding, "utf8"));
+    record.operation.summary = "Edited after review";
+    writeFileSync(tampered, JSON.stringify(record));
+    const invalid = await anvil("legacy", "bridge", "lower", tampered, "--title", "x", "--json");
+    expect(invalid.code).toBe(1);
+    expect(JSON.parse(invalid.out).code).toBe("legacy/bridge_input_invalid");
+
+    // Two distinct reviewed bindings that name the same operation.
+    const duplicate = await anvil(
+      "legacy",
+      "bridge",
+      "lower",
+      binding,
+      writeBinding(),
+      "--title",
+      "x",
+      "--json",
+    );
+    expect(duplicate.code).toBe(1);
+    expect(JSON.parse(duplicate.out).code).toBe("legacy/bridge_lower_duplicate_operation_name");
+  });
+
+  it("omits non-executable bindings under --executable-only but still reports them", async () => {
+    const dir = join(work, "bindings");
+    mkdirSync(dir);
+    writePromotedBinding(dir);
+    writeFileSync(join(dir, "produce-only.json"), readFileSync(writeBinding(), "utf8"));
+    const result = await anvil(
+      "legacy",
+      "bridge",
+      "lower",
+      dir,
+      "--title",
+      "Legacy estate",
+      "--executable-only",
+    );
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain("1 operation(s) lowered; 1 refused as executable");
+    expect(result.out).toContain("refused refunds.submit_refund (omitted)");
+    expect(result.out).toContain("never enabled by lowering");
   });
 });

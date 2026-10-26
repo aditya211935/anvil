@@ -6,3 +6,5 @@ export * from "./evidence-graph.js";
 export * from "./explain.js";
 export * from "./identity.js";
 export * from "./input.js";
+export * from "./merge.js";
+export * from "./scorecard.js";

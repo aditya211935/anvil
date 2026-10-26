@@ -1,9 +1,9 @@
 # Legacy application estates
 
-Anvil can turn offline Java EE, .NET Framework, and messaging configuration into
-an evidence-backed inventory of possible invocation boundaries. It can then
-help a coding harness describe one candidate as a business operation and bind a
-human review to that exact proposal.
+Anvil can turn offline Java EE, .NET Framework, messaging, stored-procedure DDL,
+and JCL batch configuration into an evidence-backed inventory of possible
+invocation boundaries. It can then help a coding harness describe one candidate
+as a business operation and bind a human review to that exact proposal.
 
 It does not yet execute the approved binding. Today, the workflow ends with a
 reviewed, content-addressed plan whose runtime status is `not_implemented`.
@@ -51,6 +51,7 @@ fail-closed collection plan
   -> content-addressed inventory
   -> conflict-preserving candidates
   -> evidence graph + coverage gaps + candidate explanations
+  -> modernization scorecard (counts; never a gate)
   -> one hash-bound harness task
   -> deterministic proposal assessment
   -> separate human approval or rejection
@@ -58,6 +59,11 @@ fail-closed collection plan
   -> future deployment-local bridge
   -> future business-shaped MCP tool
 ```
+
+At any point after the inventory exists, `anvil legacy scorecard` counts what
+the estate contains, what is reviewed, and what blocks the rest; read
+[Read a legacy modernization scorecard](legacy-scorecard.md) for what each
+section does and does not say.
 
 The harness can investigate source code, tests, schemas, runbooks, and change
 records. It cannot remove required decisions from the task, approve its own
@@ -148,6 +154,92 @@ base addresses, binding settings, and protocol mappings remain ambiguous.
 The collector never creates a producer or consumer and never samples a queue to
 guess a schema.
 
+### Databases (stored procedures)
+
+- PL/SQL `CREATE [OR REPLACE] PACKAGE` specifications and bodies, standalone
+  `CREATE [OR REPLACE] PROCEDURE` and `FUNCTION` DDL, including `IN`, `OUT`,
+  and `IN OUT` modes, `DEFAULT` markers, `RETURN` types, and `SYS_REFCURSOR`
+  OUT parameters;
+- T-SQL `CREATE [OR ALTER] PROCEDURE` headers with `@parameter` types,
+  `= default` markers, and `OUTPUT` parameters;
+- literal transaction facts in a body: `PRAGMA AUTONOMOUS_TRANSACTION`,
+  `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK`; and
+- literal error facts: `RAISE_APPLICATION_ERROR(-20xxx, ...)` codes, `THROW`
+  codes, and `RAISERROR` message ids.
+
+Exports are read as inert text with `--`, `/* */`, and string literals stripped
+first, so commented-out DDL and dynamic SQL inside a literal are never read as
+declarations. The scanner never evaluates SQL, resolves a type, or connects to a
+database. When a package specification and body are both present, signatures
+come from the specification and the body contributes only evidence and literal
+body facts; a body-only subprogram is private and is not a candidate. Overloaded
+or divergent signatures for one procedure are retained as a conflict, not
+chosen. A member that carries credentials (`IDENTIFIED BY`, `WITH PASSWORD`,
+`SECRET =`, inline connection-string passwords) is refused with
+`legacy/database/secret_like_value`.
+
+The collector explicitly does not infer:
+
+- idempotency: a procedure that commits is a mutation until a human proves
+  otherwise;
+- result-set shapes: a T-SQL procedure that selects rows gets no `output_schema`
+  claim and `legacy/database/result_set_unproven` instead, because DDL does not
+  declare the columns a body returns;
+- T-SQL function contracts: a `CREATE FUNCTION` unit is recorded as evidence
+  with `legacy/database/tsql_function_unsupported` and projects no candidate; or
+- business meaning: `post_entry` is a technical name, not a business operation.
+
+### Mainframe batch (JCL) and COBOL copybooks
+
+The `mainframe` lane reads JCL as inert, 80-column text and COBOL copybooks as
+record layouts. It never submits a job, resolves a cataloged procedure, opens a
+dataset, or guesses a code page: members must already be UTF-8 text.
+
+What is read:
+
+- `JOB`, `EXEC PGM=`, `EXEC PROC=` / `EXEC name`, `DD` with `DSN=` and `DISP=`,
+  `PARM=`, `COND=`, `IF/THEN/ELSE/ENDIF`, `JCLLIB ORDER=`, same-member `SET`
+  symbols, `INCLUDE MEMBER=`, in-stream `PROC ... PEND`, comma continuation
+  cards, and `//*` comments;
+- `.jcl`, `.proc`, and members under a `JCL/` or `PROCLIB/` directory, plus any
+  text member that begins with a `JOB` or `PROC` card in `auto` mode; and
+- `.cpy`, `.cob`, and `.cbl` copybooks, recorded as `schema` artifacts.
+
+What it yields: one `batch_job` observation per `JOB` (scheduler reference
+`jes`, or the declared `JCLLIB ORDER`) and one per `PROC` member (`proclib`).
+Every claim is `declared`: the ordered step list `NNN:STEP:PGM=...` is the
+`binding_target`; datasets opened with `DISP=SHR` or `OLD` are `input_schema`
+references and `NEW` or `MOD` are `output_schema` references, prefixed `dsn:`;
+`COND=` and `IF` relational expressions are `error_semantics`; the
+interaction pattern is `batch`. A copybook is linked as
+`copybook:<path>` only when a DD names its PDS member, as in
+`DSN=PROD.COPYLIB(CUSTREC)`; otherwise it is only a recorded artifact.
+
+What is not inferred: idempotency, restartability, run frequency, what a
+program does, or the record layout of a dataset that no copybook member name
+proves. `&SYMBOL` values are resolved only from a `SET` in the same member;
+`&&TEMP` names stay verbatim and are excluded from schema references.
+`INCLUDE` members are reported, never followed. In-stream data after `DD *` or
+`DD DATA` is skipped up to its delimiter: only its existence is recorded. A
+member carrying a `PASSWORD=` or `PASSWD=` operand is refused as a whole with
+`legacy/mainframe/secret_like_value`.
+
+`anvil legacy schema copybook <file>` converts one copybook into a draft-07
+JSON Schema. Field names stay verbatim (`CUST-ID`, never `customerId`), and
+every field records its declaration, level, offset, byte length, usage, and
+picture under `x-anvil-cobol`. `PIC X(n)`/`A(n)` become bounded strings;
+`9(n)` becomes an integer, or a string with a pattern above 15 digits so the
+value stays exact; `V` scales become numbers with `multipleOf`; `OCCURS` becomes
+an array with `minItems`/`maxItems` and `DEPENDING ON` recorded; `REDEFINES`
+becomes a `oneOf` at the parent with offsets retained; `88` literal values
+become `enum` candidates on the parent and are listed under `conditions`;
+`FILLER` is counted in the byte length but not named; `66 RENAMES` is recorded,
+not modelled. Byte lengths follow DISPLAY (digits plus a separate sign),
+`COMP-3` (`ceil((digits + 1) / 2)`), and `COMP`/`BINARY` (2, 4, or 8 bytes)
+rules; `SYNC` slack bytes are not applied and are flagged. `COPY` statements
+are reported as `legacy/copybook/copy_not_followed`. The schema says what the
+bytes are, not what they mean.
+
 ### Content detection and explicit unknowns
 
 In `auto` mode Anvil combines conservative filename checks with bounded content
@@ -184,6 +276,13 @@ Anvil keeps both physical `binding_target` claims. Evidence ranking helps a
 reviewer inspect stronger sources first; it never deletes the lower-ranked
 assertion or chooses a convenient winner.
 
+The same rule holds across exports. When production and UAT, several
+applications, or the source repository and deployed configuration are merged
+with `anvil legacy merge`, the merged snapshot keeps every observation, lets the
+same reconciler surface conflicts, and marks each logical capability whose
+deployments disagree as `divergent` with an explicit warning. See
+[Merge an estate from several exports](legacy-inventory.md#7b-merge-an-estate-from-several-exports).
+
 An MQ object and an AsyncAPI channel also remain separate candidates until
 reviewed evidence establishes their relationship. A matching string is a lead,
 not proof that two protocols describe the same business capability.
@@ -210,6 +309,106 @@ Generic middleware tools discard the schema, effect, authorization, completion,
 and retry constraints that make a capability safe enough to review. They also
 give a harness more transport authority than the business operation requires.
 
+## Scaffold a contract from source
+
+Many legacy HTTP estates have handlers but no published contract: a JAX-RS
+resource, a Spring MVC controller, a servlet mapped in `web.xml`. `anvil
+legacy scaffold <dir>` recovers those endpoints and lowers them into an
+OpenAPI 3 draft that `anvil compile` reads like any other specification.
+
+```bash
+anvil legacy scaffold src/ --out generated/estate.openapi.json
+anvil compile generated/estate.openapi.json --out generated/estate
+anvil inspect generated/estate
+```
+
+### Java source (JAX-RS, Spring MVC, web.xml)
+
+The Java lane reads `.java` and `web.xml` members as inert text. It understands:
+
+- JAX-RS: class-level and method-level `@Path`, `@GET`/`@POST`/`@PUT`/
+  `@DELETE`/`@HEAD`/`@OPTIONS`/`@PATCH`, `@Consumes`/`@Produces` at class and
+  method level (the method wins), `@PathParam`/`@QueryParam`/`@HeaderParam`/
+  `@CookieParam`/`@FormParam` with `@DefaultValue`, the un-annotated
+  non-`@Context` parameter as the request entity, a `@BeanParam` whose class
+  is in the same source set, and `@ApplicationPath` on the `Application`
+  subclass as the base path. `{id: regex}` templates become `{id}`.
+- Spring MVC: `@RestController`/`@Controller` with `@RequestMapping` at class
+  and method level, `@GetMapping` and the other shorthands, `consumes`/
+  `produces`, `@PathVariable`/`@RequestParam`/`@RequestHeader`/`@CookieValue`
+  with `name`, `required` and `defaultValue`, `@RequestBody`, and
+  `ResponseEntity<T>` unwrapped to the declared body type. A
+  `@RequestMapping` that declares no HTTP method is recorded as an unmapped
+  path, one per declared path, never compiled as an operation.
+- `web.xml`: every `<servlet-mapping>` `<url-pattern>` as an unmapped path
+  with the servlet class as its handler. A JAX-RS container servlet (Jersey,
+  RESTEasy, CXF, or an `Application` init-param) supplies the JAX-RS base
+  path when no `@ApplicationPath` is declared; a `DispatcherServlet` mapping
+  supplies the Spring base path.
+
+Declared types project onto a small JSON Schema subset — `String` to string,
+`int`/`long` to integer with `int32`/`int64`, `BigDecimal` to number, `UUID`
+to a `uuid` string, `LocalDate` and `Date` to `date`/`date-time`,
+`List<T>`/`T[]` to arrays — and every schema records the declared Java type
+verbatim as `x-anvil-source-type`. An enum or a plain data class declared in
+the same source set is projected from its own declaration; anything else is
+an open object. Every operation, parameter and payload carries
+`x-anvil-evidence`: the file, 1-based line and construct (`@GET`, `@Path`,
+`servlet-mapping`) it was read from. `operationId` is
+`<SimpleClassName>.<methodName>`; an overload or a mapping with several
+routes takes a `_<n>` suffix by source order, with an info diagnostic.
+
+The boundary is deliberate. The lane is a bounded annotation recognizer, not
+a Java compiler: it resolves no imports, loads no classes, and evaluates no
+expression. A path written as a constant or a concatenation is reported
+(`legacy/scaffold/jaxrs/unresolvable_path_expression`) and skipped; a
+`${property}` placeholder is kept verbatim with a warning; a sub-resource
+locator's routes are not followed; an annotation whose arguments do not parse
+is reported, never guessed. Nothing in the draft carries a description, an
+example, or a success semantic the source did not declare, so reads compile
+as reads and every mutation lands `review_required`. Scaffolding approves
+nothing. The same input always yields the same draft and content hash,
+whatever order the members arrive in.
+
+### .NET source (ASP.NET, ASMX)
+
+The `dotnet` lane reads `.cs`, `.asmx` and `.asmx.cs` members. Nothing is
+compiled or loaded: comments, string contents and preprocessor lines are
+blanked before attributes are scanned, so `// [HttpGet]` in a comment is never a
+route, while attribute arguments such as `[Route("api/[controller]")]` are
+read at their exact offset.
+
+| Framework | What is read | Path proof |
+| --- | --- | --- |
+| `aspnet_core` | `[ApiController]`, `[Route]`, `[HttpGet]`…`[HttpOptions]` with optional templates, `[AcceptVerbs]`, `[Consumes]`/`[Produces]`, `[FromRoute]`/`[FromQuery]`/`[FromHeader]`/`[FromBody]`/`[FromForm]` with `Name=` | The attribute templates themselves. `[controller]`/`[action]` expand to the class name minus `Controller` and the method name; `{id:int}` becomes `{id}` with an integer schema; `{id?}` and `{*path}` are recorded with warnings because OpenAPI path parameters are required and single-segment. |
+| `aspnet_webapi` | Controllers deriving from `ApiController`: `[RoutePrefix]`/`[Route]`, verb attributes, or the `Get*`/`Post*`/`Put*`/`Delete*` action-name convention | Attribute routes as declared. Convention-routed actions are expanded only against a `routes.MapHttpRoute(…, "api/{controller}/{id}", …)` template found in the same source set; without one they are left unmapped with `route_template_unknown`. No prefix is ever guessed. |
+| `asmx` | `[WebService]` classes and their `[WebMethod]`s (`MessageName` honoured) | `POST /<File>.asmx/<Method>` only when the `.asmx` file with a matching `Class=` is present; otherwise unmapped with `activation_file_missing`. |
+
+Binding sources are read from attributes when declared. When a parameter has
+none, the ASP.NET Core `[ApiController]` convention is applied — a simple type
+matching a route token is a path parameter, other simple types are query
+parameters, complex types are the body — and the parameter's evidence says
+`construct: "inferred_binding"` so a reviewer can tell convention from
+declaration. On a controller that is not an `[ApiController]`, an undeclared
+complex-type binding is reported and not recorded.
+
+Declared types are projected, never widened: `int`/`long` → integer,
+`decimal`/`double` → number, `Guid` → `uuid`, `DateTime`/`DateTimeOffset` →
+`date-time`, `T?` keeps `T` with `x-anvil-source-type: "T?"`, collections →
+arrays, `Task<T>`/`ActionResult<T>` unwrap to `T`, an `enum` declared in the
+source set contributes its member names, and a DTO class or record declared in
+the source set contributes its public property names and types. Anything else
+is an open object that records the source type. `operationId` is
+`<ControllerClass>.<Method>`; overloads and multi-verb actions are suffixed
+(`_1`, `_get`) with an info diagnostic. Diagnostics live under
+`legacy/scaffold/aspnet_core/…`, `legacy/scaffold/aspnet_webapi/…` and
+`legacy/scaffold/asmx/…`; a route whose template would carry a secret-like
+value is refused rather than written into the draft.
+
+See [`examples/legacy-orders-dotnet`](../examples/legacy-orders-dotnet/README.md)
+for a fixture that walks `anvil legacy scaffold` → `anvil compile` →
+`anvil inspect` across all three frameworks.
+
 ## Current product boundary
 
 Inventory, refinement, bridge-contract planning, and static driver-descriptor
@@ -218,7 +417,15 @@ shape — a message binding whose reply mode is `reply_to` or
 `fixed_destination` — conformance execution and hosting are implemented too:
 `anvil legacy bridge conformance` drives `@anvil/legacy-bridge`'s HTTP
 facade against a deterministic broker double, and `anvil legacy bridge
-serve` hosts that facade over one STOMP 1.2 connection. Driver code
+serve` hosts that facade over one STOMP 1.2 connection. `anvil legacy bridge
+lower` projects reviewed bindings of every transport family into an OpenAPI
+document and manifest that `anvil compile` turns into a bundle, so a reviewed
+legacy operation gets the same CLI + MCP + skill triad as every other Anvil
+operation — but lowering never enables execution: a binding that has not
+passed conformance, or whose shape the queue bridge cannot execute, is held
+`blocked`, a `conformance_passed` one still needs `anvil approve` after
+inspection, and the runtime executes it only behind a declared protocol
+facade pointing at a served, `conformance_passed` binding. Driver code
 generation, packaging, deployment, and live readiness are not implemented
 for any transport, and every other transport family has neither conformance
 execution nor a serve path.
@@ -264,5 +471,6 @@ become callable.
 
 - [Build a legacy inventory](legacy-inventory.md)
 - [Refine and review one candidate](legacy-refinement.md)
+- [Read a legacy modernization scorecard](legacy-scorecard.md)
 - [Use the legacy TypeScript SDK](legacy-sdk.md)
 - [Design a deployment-local bridge](legacy-runtime-bridges.md)

@@ -703,16 +703,16 @@ Options:
 ### `anvil legacy`
 `anvil legacy [options] [command]`
 
-Inventory offline legacy application and messaging evidence.
+Inventory offline legacy application, messaging, database, and batch evidence.
 
-Discover evidence-backed EJB, WCF, resource-adapter, and messaging invocation candidates from caller-supplied offline exports. Collection never connects to a server or broker, loads an assembly, executes bytecode, opens an archive, reads a queue, or invents business semantics.
+Discover evidence-backed EJB, WCF, resource-adapter, messaging, stored-procedure, and JCL batch-job invocation candidates from caller-supplied offline exports. Collection never connects to a server, broker, or database, loads an assembly, executes bytecode or SQL, opens an archive, reads a queue, submits a job, or invents business semantics.
 
 #### `anvil legacy inventory`  *(mutates)*
 `anvil legacy inventory [options] <source>`
 
 Build a content-addressed legacy estate inventory without invoking the estate.
 
-Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, and supported broker or AsyncAPI exports. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.
+Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, supported broker or AsyncAPI exports, PL/SQL or T-SQL stored-procedure DDL, and JCL job/procedure members with COBOL copybooks. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.
 
 Options:
 - `--environment <id>` — deployment environment coordinate
@@ -722,7 +722,7 @@ Options:
 - `--source-id <id>` — stable evidence-system id (default: <estate>:<environment>)
 - `--source-kind <kind>` — evidence authority (deployed_artifact | deployed_configuration | broker_configuration | artifact_repository | source_repository | runtime_observation | operator_attestation | service_catalog | documentation | naming_inference)
 - `--revision <revision>` — immutable source revision or export digest label
-- `--collector <collector>` — collector lane (auto | java-ee | dotnet | messaging)
+- `--collector <collector>` — collector lane (auto | java-ee | dotnet | messaging | database | mainframe)
 - `--out <file>` — write the complete report without overwriting different content
 - `--check` — exit non-zero when any candidate contains a conflict
 - `--json` — emit the complete machine-readable report
@@ -809,7 +809,7 @@ Options:
 
 Host the conformance-passed facade on 127.0.0.1 over one STOMP broker connection.
 
-Serves POST /invoke and GET /readyz for exactly one reviewed binding. Refuses unless the binding's runtime status is conformance_passed and --conformance is the exact, fully-passed report that promoted it — a binding edited by hand to claim the status cannot start. Connects one STOMP 1.2 client to --broker with credentials read from ANVIL_LEGACY_BROKER_LOGIN and ANVIL_LEGACY_BROKER_PASSCODE (never from a flag or the URL, never printed). Binds 127.0.0.1 unless --host names another address, which is served with a warning: the facade is unauthenticated HTTP meant to sit beside the runtime as its protocol facade. One transport shape only: a message binding whose reply mode is reply_to or fixed_destination. Serving proves nothing about live readiness that conformance did not — the broker, destination, and identity are still the unverified live facts the bridge plan lists. Stops on SIGTERM or SIGINT.
+Serves POST /invoke, POST /invoke/<operation name> (the route a bundle from `anvil legacy bridge lower` addresses; another operation's name is refused with 404, never forwarded), and GET /readyz for exactly one reviewed binding. Refuses unless the binding's runtime status is conformance_passed and --conformance is the exact, fully-passed report that promoted it — a binding edited by hand to claim the status cannot start. Connects one STOMP 1.2 client to --broker with credentials read from ANVIL_LEGACY_BROKER_LOGIN and ANVIL_LEGACY_BROKER_PASSCODE (never from a flag or the URL, never printed). Binds 127.0.0.1 unless --host names another address, which is served with a warning: the facade is unauthenticated HTTP meant to sit beside the runtime as its protocol facade. One transport shape only: a message binding whose reply mode is reply_to or fixed_destination. Serving proves nothing about live readiness that conformance did not — the broker, destination, and identity are still the unverified live facts the bridge plan lists. Stops on SIGTERM or SIGINT.
 
 Options:
 - `--conformance <file>` — the conformance report that promoted the binding
@@ -819,6 +819,21 @@ Options:
 - `--port <n>` — port on the bind address (default: a free port)
 - `--host <address>` — bind address (default: 127.0.0.1); a non-loopback address is served only when given here, with a warning
 - `--json` — print one { url, port } document, then keep serving
+
+##### `anvil legacy bridge lower`  *(mutates)*
+`anvil legacy bridge lower [options] <binding...>`
+
+Lower reviewed bindings into an OpenAPI document and manifest for anvil compile.
+
+Projects one or more reviewed LegacyCapabilityBinding JSON files (or directories of them) into an OpenAPI 3.0.3 document plus an Anvil manifest, so `anvil compile` gives each reviewed legacy operation the same CLI + MCP + skill triad every other operation gets. Each operation is POST /invoke/<operation name> — the route `anvil legacy bridge serve` answers for that binding — and carries the queue request/reply wire binding derived from the reviewed binding by content hash. Lowering never enables execution: a binding that has not passed conformance, or whose transport the queue bridge cannot execute, is held `state: blocked`; a conformance_passed binding is left to the compiler's own classification and still needs `anvil approve` after inspection; reviewed idempotency and retry semantics are carried only where they tighten. The runtime executes an approved operation only when an operator declares a protocol facade pointing at a served, conformance_passed binding. Refuses a binding that fails verification and two bindings that name one operation.
+
+Options:
+- `--title <title>` — the lowered document's info.title (the bundle's name)
+- `--out-spec <file>` — write the OpenAPI document here (no overwrite of different content)
+- `--out-manifest <file>` — write the Anvil manifest YAML here (no overwrite of different content)
+- `--service-id <id>` — record a service name in the manifest; anvil compile derives one otherwise
+- `--executable-only` — omit bindings the queue bridge cannot execute instead of emitting them blocked
+- `--json` — emit the complete lowering report, documents included
 
 #### `anvil legacy plan`  *(mutates)*
 `anvil legacy plan [options] <manifest>`
@@ -870,6 +885,66 @@ Compare legacy inventories by deployment occurrence and logical lineage.
 Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete deterministic inventory diff
+
+#### `anvil legacy merge`  *(mutates)*
+`anvil legacy merge [options] <inventory...>`
+
+Merge several inventories of one estate into one verified snapshot.
+
+Unions content-addressed artifacts, evidence, and observations from several offline exports (environments, applications, source plus deployed configuration) and reconciles them together. Nothing is chosen or dropped: records that disagree stay as conflicts, and each logical capability deployed at several coordinates carries explicit cross-source agreement or disagreement. The output is a complete inventory report that every downstream legacy command accepts.
+
+Options:
+- `--estate <id>` — merged estate id (required when the inputs name different estates)
+- `--estate-name <name>` — human-readable merged estate name
+- `--out <file>` — write the complete report without overwriting different content
+- `--check` — exit non-zero when any logical capability disagrees across sources
+- `--json` — emit the complete machine-readable report
+
+#### `anvil legacy scaffold`  *(mutates)*
+`anvil legacy scaffold [options] <source>`
+
+Draft an OpenAPI contract from legacy source that has none.
+
+Reads Java (JAX-RS, Spring MVC, web.xml) and .NET (ASP.NET attribute routing, ASMX) source as inert text and emits a deterministic OpenAPI 3 draft whose every operation records the source coordinates it was read from. The draft compiles through `anvil compile` like any specification; nothing in it carries business semantics the source did not declare, so mutations land review_required.
+
+Options:
+- `--title <title>` — info.title for the draft (default: source directory name)
+- `--lane <lane>` — scaffold lane (auto | java | dotnet)
+- `--out <file>` — write the OpenAPI draft (JSON) without overwriting different content
+- `--json` — emit the complete machine-readable report
+
+#### `anvil legacy scorecard`  *(mutates)*
+`anvil legacy scorecard [options] <inventory>`
+
+Score an estate's modernization state from its inventory and reviewed bindings.
+
+Counts what the inventory contains, how much of it is understood, which candidates have a reviewed binding, which bindings have the one transport shape the queue bridge can conformance-test, and what blocks the rest. Every figure is a count over inventory or binding records; the scorecard proposes no approval, asserts no idempotency, and never reports a capability as ready. It exits 0 whenever its inputs verify: a scorecard is a reading, not a gate.
+
+Options:
+- `--bindings <paths...>` — reviewed capability bindings or decision reports: files, or directories of *.json
+- `--plan <file>` — assess coverage against an addressed collection plan
+- `--format <format>` — output format for --out and the terminal: json | md
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete scorecard report as JSON
+
+#### `anvil legacy schema`
+`anvil legacy schema [options] [command]`
+
+Convert legacy record layouts into JSON Schema without inferring meaning.
+
+Projects a declared record layout into a draft-07 JSON Schema. Field names stay verbatim, every field records its source declaration and byte offset, and nothing about business meaning is inferred.
+
+##### `anvil legacy schema copybook`  *(mutates)*
+`anvil legacy schema copybook [options] <file>`
+
+Convert one COBOL copybook into a JSON Schema with byte offsets.
+
+Reads one regular copybook file as inert text (fixed columns 8-72, or free format when no sequence area is detected). Level numbers, PICTURE, USAGE, OCCURS, REDEFINES, 88-level conditions, and FILLER become a draft-07 JSON Schema whose fields keep their COBOL names and carry their declaration under x-anvil-cobol. COPY statements are reported, never followed.
+
+Options:
+- `--format <format>` — source format: auto | fixed | free
+- `--out <file>` — write the JSON Schema document without overwriting different content
+- `--json` — emit the complete machine-readable report
 
 ### `anvil enrich-sources`
 `anvil enrich-sources [options] [command]`
