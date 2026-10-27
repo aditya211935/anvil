@@ -12,15 +12,7 @@ overrides:
   undici@<8.12.3: ^8.12.3
   jsdom: '-'
   require-from-string: '-'
-  zod-to-json-schema: '-'
-
-patchedDependencies:
-  '@modelcontextprotocol/sdk@1.32.1':
-    hash: b839f6e222ac2f6ee966efaf0b20e7b28ba3ce0fc7897d69df2bac105747adb3
-    path: patches/@modelcontextprotocol__sdk@1.32.1.patch
-  ajv@8.20.0:
-    hash: 406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1
-    path: patches/ajv@8.20.0.patch
+  zod-to-json-schema: link:./vendor/zod-to-json-schema
 
 importers:
 
@@ -162,7 +154,7 @@ importers:
         version: link:../targets
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
-        version: 1.32.1(patch_hash=b839f6e222ac2f6ee966efaf0b20e7b28ba3ce0fc7897d69df2bac105747adb3)(zod@4.6.7)
+        version: 1.32.1(zod@4.6.7)
       commander:
         specifier: ^14.0.3
         version: 14.0.3
@@ -367,7 +359,7 @@ importers:
         version: link:../runtime
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
-        version: 1.32.1(patch_hash=b839f6e222ac2f6ee966efaf0b20e7b28ba3ce0fc7897d69df2bac105747adb3)(zod@4.6.7)
+        version: 1.32.1(zod@4.6.7)
       yaml:
         specifier: ^2.8.1
         version: 2.9.1
@@ -422,7 +414,7 @@ importers:
         version: link:../runtime
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
-        version: 1.32.1(patch_hash=b839f6e222ac2f6ee966efaf0b20e7b28ba3ce0fc7897d69df2bac105747adb3)(zod@4.6.7)
+        version: 1.32.1(zod@4.6.7)
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -472,7 +464,7 @@ importers:
         version: 1.3.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
-        version: 1.32.1(patch_hash=b839f6e222ac2f6ee966efaf0b20e7b28ba3ce0fc7897d69df2bac105747adb3)(zod@4.6.7)
+        version: 1.32.1(zod@4.6.7)
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -4409,11 +4401,11 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@modelcontextprotocol/sdk@1.32.1(patch_hash=b839f6e222ac2f6ee966efaf0b20e7b28ba3ce0fc7897d69df2bac105747adb3)(zod@4.6.7)':
+  '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
       '@hono/node-server': 2.1.3(hono@4.13.13)
-      ajv: 8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1)
-      ajv-formats: 3.0.1(ajv@8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1))
+      ajv: 8.20.0
+      ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
       cors: 2.8.6
       cross-spawn: 7.0.6
@@ -4427,6 +4419,7 @@ snapshots:
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
       zod: 4.6.7
+      zod-to-json-schema: link:vendor/zod-to-json-schema
     transitivePeerDependencies:
       - supports-color
 
@@ -4747,9 +4740,9 @@ snapshots:
       '@scalar/json-magic': 0.12.17
       '@scalar/openapi-types': 0.9.1
       '@scalar/openapi-upgrader': 0.2.9
-      ajv: 8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1)
-      ajv-draft-04: 1.0.0(ajv@8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1))
-      ajv-formats: 3.0.1(ajv@8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1))
+      ajv: 8.20.0
+      ajv-draft-04: 1.0.0(ajv@8.20.0)
+      ajv-formats: 3.0.1(ajv@8.20.0)
       jsonpointer: 5.0.1
       leven: 4.1.0
       yaml: 2.9.1
@@ -4995,15 +4988,15 @@ snapshots:
 
   acorn@8.17.0: {}
 
-  ajv-draft-04@1.0.0(ajv@8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1)):
+  ajv-draft-04@1.0.0(ajv@8.20.0):
     optionalDependencies:
-      ajv: 8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1)
+      ajv: 8.20.0
 
-  ajv-formats@3.0.1(ajv@8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1)):
+  ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
-      ajv: 8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1)
+      ajv: 8.20.0
 
-  ajv@8.20.0(patch_hash=406b4e3c9269c24a71076a7ef346b562551a5c7c45522f699536592fabdc40a1):
+  ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-uri: 3.1.9

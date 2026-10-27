@@ -48,11 +48,7 @@
       "undici@<8.12.3": "^8.12.3",
       "jsdom": "-",
       "require-from-string": "-",
-      "zod-to-json-schema": "-"
-    },
-    "patchedDependencies": {
-      "@modelcontextprotocol/sdk@1.32.1": "patches/@modelcontextprotocol__sdk@1.32.1.patch",
-      "ajv@8.20.0": "patches/ajv@8.20.0.patch"
+      "zod-to-json-schema": "link:./vendor/zod-to-json-schema"
     }
   }
 }
