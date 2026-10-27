@@ -1,0 +1,66 @@
+diff --git a/dist/cjs/server/zod-json-schema-compat.js b/dist/cjs/server/zod-json-schema-compat.js
+index bc067dad0ab4f63b52b0889c10ff30d64e132a01..cb44d7679ca5cf5664f7efde8cca490c66bc50d5 100644
+--- a/dist/cjs/server/zod-json-schema-compat.js
++++ b/dist/cjs/server/zod-json-schema-compat.js
+@@ -33,7 +33,6 @@ exports.getMethodLiteral = getMethodLiteral;
+ exports.parseWithCompat = parseWithCompat;
+ const z4mini = __importStar(require("zod/v4-mini"));
+ const zod_compat_js_1 = require("./zod-compat.js");
+-const zod_to_json_schema_1 = require("zod-to-json-schema");
+ function mapMiniTarget(t) {
+     if (!t)
+         return 'draft-7';
+@@ -51,11 +50,8 @@ function toJsonSchemaCompat(schema, opts) {
+             io: opts?.pipeStrategy ?? 'input'
+         });
+     }
+-    // v3 branch — use vendored converter
+-    return (0, zod_to_json_schema_1.zodToJsonSchema)(schema, {
+-        strictUnions: opts?.strictUnions ?? true,
+-        pipeStrategy: opts?.pipeStrategy ?? 'input'
+-    });
++    // Patched for anvil: zod 3 schemas are not supported, so its converter is not installed.
++    throw new Error('Only zod 4 schemas are supported');
+ }
+ function getMethodLiteral(schema) {
+     const shape = (0, zod_compat_js_1.getObjectShape)(schema);
+diff --git a/dist/esm/server/zod-json-schema-compat.js b/dist/esm/server/zod-json-schema-compat.js
+index 62f7fd0ef1a323d674f003a305bfa359e6e744e5..6f310e86d69da19d99dfac0b707b4070b5aa28be 100644
+--- a/dist/esm/server/zod-json-schema-compat.js
++++ b/dist/esm/server/zod-json-schema-compat.js
+@@ -5,7 +5,6 @@
+ // ----------------------------------------------------
+ import * as z4mini from 'zod/v4-mini';
+ import { getObjectShape, safeParse, isZ4Schema, getLiteralValue } from './zod-compat.js';
+-import { zodToJsonSchema } from 'zod-to-json-schema';
+ function mapMiniTarget(t) {
+     if (!t)
+         return 'draft-7';
+@@ -23,11 +22,8 @@ export function toJsonSchemaCompat(schema, opts) {
+             io: opts?.pipeStrategy ?? 'input'
+         });
+     }
+-    // v3 branch — use vendored converter
+-    return zodToJsonSchema(schema, {
+-        strictUnions: opts?.strictUnions ?? true,
+-        pipeStrategy: opts?.pipeStrategy ?? 'input'
+-    });
++    // Patched for anvil: zod 3 schemas are not supported, so its converter is not installed.
++    throw new Error('Only zod 4 schemas are supported');
+ }
+ export function getMethodLiteral(schema) {
+     const shape = getObjectShape(schema);
+diff --git a/package.json b/package.json
+index 3cd38a8e6cc84aab856f73243bd4adeff7423507..7234c19d1f5537b8cec37b908851d4f750fbe961 100644
+--- a/package.json
++++ b/package.json
+@@ -116,8 +116,7 @@
+         "json-schema-typed": "^8.0.2",
+         "pkce-challenge": "^5.0.0",
+         "raw-body": "^3.0.0",
+-        "zod": "^3.25 || ^4.0",
+-        "zod-to-json-schema": "^3.25.1"
++        "zod": "^3.25 || ^4.0"
+     },
+     "peerDependencies": {
+         "@cfworker/json-schema": "^4.1.1",
